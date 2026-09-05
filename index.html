@@ -138,7 +138,7 @@ const $ = id => document.getElementById(id);
 const norm = s => (s||"").toLowerCase().normalize("NFKD").replace(/[^a-z ]/g,"");
 
 // ---------- derived state ----------
-function pickAmount(p){ const m = p.metadata||{}; return parseInt(m.amount ?? m.price ?? m.bid ?? 0, 10) || 0; }
+function pickAmount(p){ const m = p.metadata||{}; return parseInt(m.amount ?? m.price ?? m.bid ?? p.amount ?? 0, 10) || 0; }
 function pickOwner(p){ return p.picked_by || ("slot"+(p.draft_slot ?? p.roster_id ?? "?")); }
 
 function derive(){
