@@ -513,8 +513,9 @@ function renderPlan(){
     ? `<div class="hint">Biggest cliff: <b>${bestCliff.slot.replace("SUPER_FLEX","SUPERFLEX")}</b> — after ${bestCliff.top.name} (${fmtMoney(adjVal(bestCliff.top,d))}) value drops ${fmtMoney(bestCliff.cliff)}. Budget ${fmtMoney(d.myBudget)} across ${d.myOpen} slots.</div>`
     : "";
   // manual entries
-  $("manualsec").innerHTML = !manual.length ? "" :
-    `<h3>Manual entries (${manual.length})</h3>` + manual.map(m=>{
+  $("manualsec").innerHTML = (!manual.length
+    ? `<h3>Manual entries</h3><div class="noresult" style="padding:14px">none yet — open a player card and tap <b>＋ Mine</b> or <b>Sold other</b></div>`
+    : `<h3>Manual entries (${manual.length})</h3>`) + manual.map(m=>{
       const pl = bySleeper.get(String(m.player_id));
       return `<div class="mrow">
         <span class="tag ${m.mine?'mine':'other'}">${m.mine?'MINE':'OTHER'}</span>
