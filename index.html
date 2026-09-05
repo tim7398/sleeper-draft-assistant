@@ -75,7 +75,9 @@
     text-transform:uppercase; letter-spacing:.04em; }
 
   /* ---------- search ---------- */
-  .wrap { padding:12px 12px 6px; }
+  .wrap { padding:12px 12px 8px; }
+  #view-search .wrap { position:sticky; top:calc(env(safe-area-inset-top) + 43px); z-index:9;
+    background:linear-gradient(var(--ink) 78%, transparent); }
   #search { width:100%; padding:12px 14px 11px; font:500 17px/1 var(--mono); background:var(--panel);
     color:var(--fg); border:1px solid var(--line); border-radius:10px; outline:none; caret-color:var(--go); }
   #search::placeholder { color:var(--dim); }
@@ -98,8 +100,16 @@
   .taken { opacity:.4; }
   .taken .val { color:var(--stop); font-size:13px; }
   .inj { color:var(--stop); font:700 10px/1 var(--mono); margin-left:5px; vertical-align:2px; }
-  .upflag { color:var(--go); font-weight:700; }
-  .bustflag { color:var(--stop); font-weight:700; }
+  .meters { flex:none; display:flex; flex-direction:column; gap:3px; align-items:flex-end; }
+  .pips { display:flex; gap:2.5px; }
+  .pips b { width:5px; height:5px; border-radius:50%; background:rgba(125,143,134,.28); }
+  .pips.up b.on { background:var(--go); box-shadow:0 0 3px rgba(46,234,139,.5); }
+  .pips.bust b.on { background:var(--stop); box-shadow:0 0 3px rgba(255,93,93,.5); }
+  .statpips { display:flex; justify-content:center; gap:2.5px; margin-top:2px; }
+  .statpips b { width:5px; height:5px; border-radius:50%; background:rgba(125,143,134,.28); }
+  .statpips.up b.on { background:var(--go); }
+  .statpips.bust b.on { background:var(--stop); }
+  .noresult { padding:26px 14px; text-align:center; font:500 13px var(--mono); color:var(--dim); }
   .stat .n.up { color:var(--go); }
   .stat .n.bust { color:var(--stop); }
 
@@ -315,6 +325,13 @@ function recBid(p, d){
 
 // ---------- rendering ----------
 function fmtMoney(n){ return "$"+n; }
+function pipsHtml(score, cls, wrap){
+  if (score==null) return "";
+  const k = Math.round(score/2);
+  let b = "";
+  for (let i=0;i<5;i++) b += `<b class="${i<k?'on':''}"></b>`;
+  return `<div class="${wrap} ${cls}">${b}</div>`;
+}
 function ppg(p){ return p.pts ? (p.pts/17).toFixed(1) : null; }
 function rangeStr(p){ return (p.rk_min && p.rk_max) ? "#"+p.rk_min+"–"+p.rk_max : "—"; }
 
@@ -337,7 +354,8 @@ function rowHtml(p, d){
     : `<div class="val">${fmtMoney(a)}<small>base ${fmtMoney(p.value)}${pts}</small></div>`;
   return `<div class="row ${t?'taken':''}" data-fp="${p.fp_id}">
     <div class="pos ${p.pos}">${p.pos}</div>
-    <div class="pname">${p.name}${injTag}<small>${p.team||""} · ${p.pos_rank} · #${p.sf_rank<1000?p.sf_rank:"—"} · T${p.tier}${p.up>=8?' · <span class="upflag">UP '+p.up+'</span>':''}${p.bust>=8?' · <span class="bustflag">BUST '+p.bust+'</span>':''}</small></div>
+    <div class="pname">${p.name}${injTag}<small>${p.team||""} · ${p.pos_rank} · #${p.sf_rank<1000?p.sf_rank:"—"} · T${p.tier}</small></div>
+    ${(p.up!=null||p.bust!=null)?`<div class="meters">${pipsHtml(p.up,'up','pips')}${pipsHtml(p.bust,'bust','pips')}</div>`:""}
     ${right}</div>`;
 }
 
@@ -358,7 +376,7 @@ function renderSearch(){
     }
     list = starts.concat(subs).slice(0,15);
   }
-  $("results").innerHTML = list.map(p=>rowHtml(p,d)).join("");
+  $("results").innerHTML = list.length ? list.map(p=>rowHtml(p,d)).join("") : `<div class="noresult">no match — check spelling</div>`;
 }
 
 function teamName(owner){
@@ -394,8 +412,8 @@ function openCard(fpId){
       <div class="stat"><div class="n">${p.pos_rank}</div><div class="l">pos rank</div></div>
       <div class="stat"><div class="n">T${p.tier}</div><div class="l">tier</div></div>
       <div class="stat"><div class="n">${rangeStr(p)}</div><div class="l">expert range</div></div>
-      <div class="stat"><div class="n ${p.up>=7?'up':''}">${p.up!=null?p.up+"/10":"—"}</div><div class="l">upside</div></div>
-      <div class="stat"><div class="n ${p.bust>=7?'bust':''}">${p.bust!=null?p.bust+"/10":"—"}</div><div class="l">bust risk</div></div>
+      <div class="stat"><div class="n ${p.up>=7?'up':''}">${p.up!=null?p.up+"/10":"—"}</div>${pipsHtml(p.up,'up','statpips')}<div class="l">upside</div></div>
+      <div class="stat"><div class="n ${p.bust>=7?'bust':''}">${p.bust!=null?p.bust+"/10":"—"}</div>${pipsHtml(p.bust,'bust','statpips')}<div class="l">bust risk</div></div>
       <div class="stat"><div class="n">${p.sos?p.sos+"★":"—"}</div><div class="l">sos season</div></div>
     </div>
     <div class="note">${t?"":slot?`fills your <b>${slot.replace("SUPER_FLEX","SUPERFLEX")}</b>${scarce?` · +10% scarcity (${scarce})`:""}`:"no starter slot open — bench value"}</div>`;
