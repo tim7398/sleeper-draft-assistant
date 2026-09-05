@@ -41,6 +41,12 @@
   .spacer { flex:1; }
   #draftstate { font:700 11px/1 var(--cond); color:var(--dim); text-transform:uppercase; letter-spacing:.14em;
     display:flex; align-items:center; gap:6px; }
+  #syncbtn { flex:none; width:30px; height:30px; border-radius:50%; border:1px solid var(--line);
+    background:var(--panel2); color:var(--dim); font:700 15px/1 var(--mono); padding:0;
+    display:flex; align-items:center; justify-content:center; align-self:center; }
+  #syncbtn:active { color:var(--go); border-color:var(--go); }
+  #syncbtn.spin { animation: spin .8s linear infinite; color:var(--go); border-color:var(--go); }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .dot { width:7px; height:7px; border-radius:50%; background:var(--stop); flex:none; }
   .dot.ok { background:var(--go); box-shadow:0 0 6px var(--go); }
 
@@ -128,10 +134,6 @@
   .mrow .ma { font:700 14px var(--mono); color:var(--money); }
   .mrow .mx { font:800 15px/1 var(--cond); color:var(--stop); padding:6px 10px; background:var(--panel2);
     border-radius:6px; border:1px solid var(--line); }
-  .syncbtn { width:100%; margin-top:14px; border:1px solid var(--line); border-radius:10px;
-    background:var(--panel2); color:var(--fg); padding:13px 4px 12px;
-    font:800 14px/1 var(--cond); letter-spacing:.14em; text-transform:uppercase; }
-  .syncbtn:active { background:var(--line); }
   .stat .n.up { color:var(--go); }
   .stat .n.bust { color:var(--stop); }
 
@@ -201,6 +203,7 @@
   <div class="st plain"><span class="n" id="infl">+0%</span><span class="l">inflation</span></div>
   <span class="spacer"></span>
   <span id="draftstate"><span class="dot" id="polldot"></span><span id="draftstatetext">…</span></span>
+  <button id="syncbtn" aria-label="Sync with league">⟳</button>
 </div>
 <div id="err"></div>
 <div id="block"></div>
@@ -225,7 +228,9 @@
 
 <div id="view-board" style="display:none">
   <div class="wrap">
-    <button class="syncbtn" id="syncbtn" style="margin-top:2px">⟳ Sync with league</button>
+    <h3>League / Draft</h3>
+    <div id="leaguesec"></div>
+    <div id="draftlist" style="display:none"></div>
     <div id="manualsec"></div>
     <h3>Draft log — newest first</h3>
     <div id="dlog"></div>
@@ -262,7 +267,7 @@ let synth = [];              // synthesized picks awaiting CDN catch-up
 let draft = null;
 let users = new Map();       // user_id -> display_name
 let rosterOwner = new Map(); // roster_id -> user_id
-let draftId = DRAFT_OVERRIDE;
+let draftId = DRAFT_OVERRIDE || localStorage.getItem("active_draft_v1") || null;
 let lastPickedTs = null;
 let lastSig = "";
 let prevMeta = null;         // last seen nomination metadata (for sold synthesis)
@@ -534,6 +539,13 @@ function renderPlan(){
 function renderBoard(){
   const d = derive();
   renderStatus(d);
+  const dn = draft ? ((draft.metadata||{}).name || "draft") : "…";
+  const overridden = !!localStorage.getItem("active_draft_v1") || !!DRAFT_OVERRIDE;
+  $("leaguesec").innerHTML = `<div class="mrow">
+      <span class="tag ${overridden?'other':'mine'}">${overridden?'CUSTOM':'HOME'}</span>
+      <div class="mn">${dn} <span class="muted" style="font:500 10px var(--mono)">${draft?draft.status.replace("_"," "):""} · ${draft?draft.type:""}</span></div>
+      <button class="mx" id="changedraft" style="color:var(--fg)">change</button>
+    </div>`;
   $("manualsec").innerHTML = (!manual.length
     ? `<h3>Manual entries</h3><div class="noresult" style="padding:14px">none yet — open a player card and tap <b>＋ Mine</b> or <b>Sold other</b></div>`
     : `<h3>Manual entries (${manual.length})</h3>`) + manual.map(m=>{
@@ -559,6 +571,39 @@ function renderBoard(){
       <div class="muted" style="font:500 10px var(--mono)">${teamName(own)}</div>
     </div>`;
   }).join("") : `<div class="noresult">no picks yet</div>`;
+}
+
+async function showDraftList(){
+  const el = $("draftlist");
+  if (el.style.display !== "none"){ el.style.display="none"; return; }
+  el.style.display = ""; el.innerHTML = `<div class="noresult">loading your drafts…</div>`;
+  const season = (draft && draft.season) || "2026";
+  let rows = [];
+  try {
+    const ds = await j(`${API}/user/${MY_USER}/drafts/nfl/${season}?_=${Date.now()}`);
+    rows = (ds||[]).map(x=>`<div class="mrow" data-did="${x.draft_id}">
+      <span class="tag ${x.type==='auction'?'mine':'other'}">${x.type}</span>
+      <div class="mn">${(x.metadata||{}).name||x.draft_id} <span class="muted" style="font:500 10px var(--mono)">${x.status.replace("_"," ")} · ${x.settings&&x.settings.teams?x.settings.teams+"tm":""} ${x.settings&&x.settings.budget?"$"+x.settings.budget:""}</span></div>
+    </div>`);
+  } catch(e){ rows = [`<div class="noresult">could not load drafts: ${e.message}</div>`]; }
+  rows.unshift(`<div class="mrow" data-did=""><span class="tag mine">HOME</span><div class="mn">normie fantasy (default league)</div></div>`);
+  el.innerHTML = rows.join("");
+}
+
+async function switchDraft(did){
+  if (did) localStorage.setItem("active_draft_v1", did);
+  else localStorage.removeItem("active_draft_v1");
+  draftId = did || null;
+  picks = []; synth = []; prevMeta = null; lastPickedTs = null; lastSig = "";
+  if (!draftId){
+    const ds = await j(`${API}/league/${LEAGUE_ID}/drafts`);
+    const dd = ds.find(x=>x.status!=="complete") || ds[0];
+    draftId = dd.draft_id; draft = dd;
+  }
+  loadManual();
+  $("draftlist").style.display = "none";
+  await refreshPicks(0); await fastLoop();
+  renderBoard();
 }
 
 function renderAll(){
@@ -743,14 +788,23 @@ for (const [tid, vid, fn] of TABS){
 $("block").addEventListener("click", e=>{
   const r = e.target.closest(".toprow"); if (r && r.dataset.fp) openCard(r.dataset.fp);
 });
+$("leaguesec").addEventListener("click", e=>{
+  if (e.target.closest("#changedraft")) showDraftList();
+});
+$("draftlist").addEventListener("click", e=>{
+  const r = e.target.closest("[data-did]"); if (r) switchDraft(r.dataset.did);
+});
 $("manualsec").addEventListener("click", e=>{
   const b = e.target.closest("[data-msid]"); if (b) removeManual(b.dataset.msid);
 });
-$("syncbtn").addEventListener("click", ()=>{
+$("syncbtn").addEventListener("click", async ()=>{
   const n = manual.length;
   if (n && !confirm(`Clear ${n} manual entr${n===1?"y":"ies"} and re-sync from Sleeper?`)) return;
   manual = []; saveManual(); synth = []; lastSig = "";
-  refreshPicks(2); fastLoop();
+  $("syncbtn").classList.add("spin");
+  try { await Promise.all([refreshPicks(2), fastLoop()]); } finally {
+    setTimeout(()=>$("syncbtn").classList.remove("spin"), 500);
+  }
 });
 document.addEventListener("visibilitychange", ()=>{ if (!document.hidden){ fastLoop(); refreshPicks(0); } });
 
