@@ -98,6 +98,10 @@
   .taken { opacity:.4; }
   .taken .val { color:var(--stop); font-size:13px; }
   .inj { color:var(--stop); font:700 10px/1 var(--mono); margin-left:5px; vertical-align:2px; }
+  .upflag { color:var(--go); font-weight:700; }
+  .bustflag { color:var(--stop); font-weight:700; }
+  .stat .n.up { color:var(--go); }
+  .stat .n.bust { color:var(--stop); }
 
   /* ---------- player card (bottom sheet) ---------- */
   #card { position:fixed; inset:0; z-index:20; background:rgba(4,7,5,.72); display:none; }
@@ -333,7 +337,7 @@ function rowHtml(p, d){
     : `<div class="val">${fmtMoney(a)}<small>base ${fmtMoney(p.value)}${pts}</small></div>`;
   return `<div class="row ${t?'taken':''}" data-fp="${p.fp_id}">
     <div class="pos ${p.pos}">${p.pos}</div>
-    <div class="pname">${p.name}${injTag}<small>${p.team||""} · ${p.pos_rank} · #${p.sf_rank<1000?p.sf_rank:"—"} · T${p.tier}</small></div>
+    <div class="pname">${p.name}${injTag}<small>${p.team||""} · ${p.pos_rank} · #${p.sf_rank<1000?p.sf_rank:"—"} · T${p.tier}${p.up>=8?' · <span class="upflag">UP '+p.up+'</span>':''}${p.bust>=8?' · <span class="bustflag">BUST '+p.bust+'</span>':''}</small></div>
     ${right}</div>`;
 }
 
@@ -390,6 +394,9 @@ function openCard(fpId){
       <div class="stat"><div class="n">${p.pos_rank}</div><div class="l">pos rank</div></div>
       <div class="stat"><div class="n">T${p.tier}</div><div class="l">tier</div></div>
       <div class="stat"><div class="n">${rangeStr(p)}</div><div class="l">expert range</div></div>
+      <div class="stat"><div class="n ${p.up>=7?'up':''}">${p.up!=null?p.up+"/10":"—"}</div><div class="l">upside</div></div>
+      <div class="stat"><div class="n ${p.bust>=7?'bust':''}">${p.bust!=null?p.bust+"/10":"—"}</div><div class="l">bust risk</div></div>
+      <div class="stat"><div class="n">${p.sos?p.sos+"★":"—"}</div><div class="l">sos season</div></div>
     </div>
     <div class="note">${t?"":slot?`fills your <b>${slot.replace("SUPER_FLEX","SUPERFLEX")}</b>${scarce?` · +10% scarcity (${scarce})`:""}`:"no starter slot open — bench value"}</div>`;
   $("card").classList.add("open");
@@ -454,7 +461,7 @@ function showErr(msg){
 }
 
 async function loadStatic(){
-  players = await j("players.json?v=2");
+  players = await j("players.json?v=3");
   bySleeper = new Map(players.filter(p=>p.sleeper_id).map(p=>[p.sleeper_id, p]));
 }
 
@@ -552,7 +559,7 @@ function renderBlock(){
     else { verdict = "PASS"; vclass = "PASS"; }
   }
   const name = p ? p.name : "player " + pid;
-  const sub = p ? `${p.team||""} ${p.pos} · adj ${fmtMoney(adjVal(p,d))} · ${p.pos_rank} T${p.tier}${ppg(p)?` · ${ppg(p)} ppg`:""}` : "not in rankings — likely $1 dart";
+  const sub = p ? `${p.team||""} ${p.pos} · adj ${fmtMoney(adjVal(p,d))} · ${p.pos_rank} T${p.tier}${ppg(p)?` · ${ppg(p)} ppg`:""}${p.up!=null?` · up ${p.up}`:""}${p.bust!=null?` · bust ${p.bust}`:""}` : "not in rankings — likely $1 dart";
   const hover = (m.hovered_player_id && m.hovered_player_id !== pid && bySleeper.get(String(m.hovered_player_id)))
     ? ` · hovering: ${bySleeper.get(String(m.hovered_player_id)).name}` : "";
   el.innerHTML = `<span class="livetag">On the block</span>

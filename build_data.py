@@ -88,10 +88,26 @@ def parse_ecr(html: str) -> list[dict]:
     return json.loads(m.group(1))["players"]
 
 
+def parse_var(html: str, name: str) -> dict:
+    """Extract an embedded `var <name> = {...};` JSON blob (best-effort)."""
+    m = re.search(rf"var {name} = (\{{.*?\}});", html)
+    return json.loads(m.group(1)) if m else {}
+
+
 def build() -> list[dict]:
     aav = parse_aav(fetch(AAV_URL))
-    ecr = parse_ecr(fetch(ECR_URL))
+    ecr_html = fetch(ECR_URL)
+    ecr = parse_ecr(ecr_html)
+    # upside/bust (0-10, keyed by FP player_id) and per-team-per-position SOS
+    # stars (0-5) ship embedded in the free cheat-sheet page
+    sentiment = parse_var(ecr_html, "sentimentScores")
+    sos = parse_var(ecr_html, "sosData")
     sleeper = json.loads(fetch(SLEEPER_PLAYERS_URL))
+
+    def sos_stars(team: str, pos: str) -> float | None:
+        t = sos.get(team) or {}
+        v = t.get({"DST": "dst_stars"}.get(pos, pos.lower() + "_stars"))
+        return round(v, 1) if v else None
 
     # Sleeper lookup: normalized name -> candidates
     by_name: dict[str, list[tuple[str, dict]]] = {}
@@ -153,6 +169,9 @@ def build() -> list[dict]:
                 "pts": base["pts"] if base else 0,
                 "rk_min": int(e.get("rank_min") or 0) or None,
                 "rk_max": int(e.get("rank_max") or 0) or None,
+                "up": (sentiment.get(pid) or {}).get("upside"),
+                "bust": (sentiment.get(pid) or {}).get("bust"),
+                "sos": sos_stars(e["player_team_id"], pos),
                 "inj": base["inj"] if base else None,
                 "sleeper_id": sleeper_match(e["player_name"], pos, e["player_team_id"]),
             }
@@ -174,6 +193,9 @@ def build() -> list[dict]:
                     "bye": e.get("player_bye_week"),
                     "value": 1,
                     "pts": 0,
+                    "up": None,
+                    "bust": None,
+                    "sos": sos_stars(e["player_team_id"], pos),
                     "inj": None,
                     "sleeper_id": sleeper_match(e["player_name"], pos, e["player_team_id"]),
                 }
