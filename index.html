@@ -73,6 +73,19 @@
   .teamrow.me .tn { color:var(--accent); font-weight:700; }
   .muted { color:var(--dim); }
   #err { color:var(--bad); font-size:12px; padding:4px 12px; display:none; }
+  /* on-the-block banner */
+  #block { display:none; margin:10px 12px 0; background:var(--panel2); border:1px solid var(--line);
+    border-radius:14px; padding:12px 14px; }
+  #block.show { display:block; }
+  #block .toprow { display:flex; align-items:baseline; gap:8px; }
+  #block .bname { font-size:20px; font-weight:800; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #block .bid { font-size:24px; font-weight:800; }
+  #block .verdict { font-size:15px; font-weight:800; padding:2px 10px; border-radius:8px; }
+  #block .verdict.BID { background:rgba(63,185,80,.15); color:var(--accent); }
+  #block .verdict.PASS { background:rgba(248,81,73,.15); color:var(--bad); }
+  #block .verdict.MAX { background:rgba(210,153,34,.15); color:var(--warn); }
+  #block .verdict.SOLD { background:rgba(139,148,158,.15); color:var(--dim); }
+  #block .sub2 { color:var(--dim); font-size:12px; margin-top:4px; }
 </style>
 </head>
 <body>
@@ -85,6 +98,7 @@
   <span class="muted" id="draftstate">…</span>
 </div>
 <div id="err"></div>
+<div id="block"></div>
 
 <div id="view-search">
   <div class="wrap">
@@ -128,24 +142,43 @@ const API = "https://api.sleeper.app/v1";
 
 let players = [];            // static values data, sf_rank order
 let bySleeper = new Map();
-let picks = [];              // raw sleeper picks
+let picks = [];              // raw sleeper picks (may include synthetics)
+let synth = [];              // synthesized picks awaiting CDN catch-up
 let draft = null;
 let users = new Map();       // user_id -> display_name
+let rosterOwner = new Map(); // roster_id -> user_id
 let draftId = DRAFT_OVERRIDE;
-let lastErr = "";
+let lastPickedTs = null;
+let lastSig = "";
+let prevMeta = null;         // last seen nomination metadata (for sold synthesis)
 
 const $ = id => document.getElementById(id);
 const norm = s => (s||"").toLowerCase().normalize("NFKD").replace(/[^a-z ]/g,"");
 
 // ---------- derived state ----------
 function pickAmount(p){ const m = p.metadata||{}; return parseInt(m.amount ?? m.price ?? m.bid ?? p.amount ?? 0, 10) || 0; }
-function pickOwner(p){ return p.picked_by || ("slot"+(p.draft_slot ?? p.roster_id ?? "?")); }
+function pickOwner(p){ return p.picked_by || ownerForSlot((p.metadata||{}).slot ?? p.draft_slot) || ("slot"+(p.draft_slot ?? p.roster_id ?? "?")); }
+
+function ownerForSlot(slot){
+  if (slot==null) return null;
+  const rid = draft && draft.slot_to_roster_id ? draft.slot_to_roster_id[String(slot)] : null;
+  return rid!=null ? (rosterOwner.get(rid) || null) : null;
+}
+function slotTeamName(slot){
+  const uid = ownerForSlot(slot);
+  return uid ? teamName(uid) : (slot!=null ? "slot "+slot : "?");
+}
+function allPicks(){
+  const have = new Set(picks.map(p=>String(p.player_id)));
+  return picks.concat(synth.filter(s=>!have.has(String(s.player_id))));
+}
 
 function derive(){
+  const apicks = allPicks();
   const takenById = new Map();      // sleeper player_id -> {amount, owner}
   const spentBy = new Map();        // owner -> $
   const countBy = new Map();        // owner -> picks
-  for (const p of picks){
+  for (const p of apicks){
     const owner = pickOwner(p);
     const amt = pickAmount(p);
     takenById.set(String(p.player_id), {amount: amt, owner});
@@ -153,7 +186,7 @@ function derive(){
     countBy.set(owner, (countBy.get(owner)||0) + 1);
   }
   const totalSlots = TEAMS * (STARTERS.length + BENCH);
-  const leagueOpen = Math.max(0, totalSlots - picks.length);
+  const leagueOpen = Math.max(0, totalSlots - apicks.length);
   const remainingPool = TEAMS*BUDGET - [...spentBy.values()].reduce((a,b)=>a+b,0);
   // inflation: remaining $ vs baseline value of the players that will fill remaining slots
   const availVals = players.filter(p => p.sleeper_id && !takenById.has(p.sleeper_id)).map(p=>p.value)
@@ -162,7 +195,7 @@ function derive(){
   const inflation = remainingValue > 0 ? remainingPool / remainingValue : 1;
 
   // my roster slot assignment (greedy: dedicated slot first, then FLEX/SF, then BN)
-  const myPicks = picks.filter(p => p.picked_by === MY_USER)
+  const myPicks = apicks.filter(p => pickOwner(p) === MY_USER)
     .map(p => ({ raw:p, amount:pickAmount(p), pl: bySleeper.get(String(p.player_id)),
                  name: bySleeper.get(String(p.player_id))?.name ||
                        ((p.metadata||{}).first_name+" "+(p.metadata||{}).last_name),
@@ -215,7 +248,7 @@ function renderStatus(d){
   $("myslots").textContent = d.myOpen + " slots open";
   $("infl").textContent = "infl " + (d.inflation>0? Math.round((d.inflation-1)*100) : 0) + "%";
   const st = draft ? draft.status : "…";
-  $("draftstate").textContent = st.replace("_"," ") + " · " + picks.length + " picks";
+  $("draftstate").textContent = st.replace("_"," ") + " · " + allPicks().length + " picks";
 }
 
 function rowHtml(p, d){
@@ -317,7 +350,7 @@ function renderPlan(){
     ? `<div class="hint">Biggest cliff: <b>${bestCliff.slot.replace("SUPER_FLEX","SUPERFLEX")}</b> — after ${bestCliff.top.name} (${fmtMoney(adjVal(bestCliff.top,derive()))}) value drops ${fmtMoney(bestCliff.cliff)}. Budget ${fmtMoney(d.myBudget)} across ${d.myOpen} slots.</div>`
     : "";
   // team budgets
-  const owners = [...new Set([MY_USER, ...picks.map(pickOwner)])];
+  const owners = [...new Set([MY_USER, ...allPicks().map(pickOwner)])];
   $("teams").innerHTML = owners.map(o=>{
     const spent = d.spentBy.get(o)||0, cnt = d.countBy.get(o)||0;
     const open = STARTERS.length+BENCH-cnt;
@@ -354,6 +387,10 @@ async function loadLeague(){
     const us = await j(`${API}/league/${LEAGUE_ID}/users`);
     users = new Map(us.map(u=>[u.user_id, u.display_name]));
   } catch(e){ /* names are cosmetic */ }
+  try {
+    const rs = await j(`${API}/league/${LEAGUE_ID}/rosters`);
+    rosterOwner = new Map(rs.map(r=>[r.roster_id, r.owner_id]));
+  } catch(e){ /* slot attribution degrades to slot numbers */ }
   if (!draftId){
     const ds = await j(`${API}/league/${LEAGUE_ID}/drafts`);
     const d = ds.find(x=>x.status!=="complete") || ds[0];
@@ -362,20 +399,93 @@ async function loadLeague(){
   }
 }
 
-let pollTimer=null, draftTimer=null;
-async function pollPicks(){
+// Fast loop: /draft/<id> is the near-realtime source (nomination + high bid +
+// last_picked). /picks sits behind a CDN (s-maxage=30, SWR=300) so it can lag
+// minutes on a live draft — cache-bust it, verify it grew, and synthesize the
+// sold pick from nomination metadata while waiting.
+async function fastLoop(){
   try {
-    picks = MOCK ? mockPicks() : await j(`${API}/draft/${draftId}/picks`);
+    draft = MOCK ? mockDraft() : await j(`${API}/draft/${draftId}?_=${Date.now()}`);
     $("polldot").classList.add("ok");
     showErr("");
+    const m = draft.metadata || {};
+    if (draft.last_picked && draft.last_picked !== lastPickedTs){
+      const first = lastPickedTs === null;   // page load: no sale actually observed
+      lastPickedTs = draft.last_picked;
+      if (!first){
+        synthesizeSold();
+        refreshPicks(4);
+      }
+    }
+    if (m.nominated_player_id) prevMeta = m;
+    const sig = [draft.status, m.nominated_player_id, m.highest_offer, m.offering_slot,
+                 allPicks().length, $("search").value].join("|");
+    if (sig !== lastSig){ lastSig = sig; renderBlock(); renderAll(); }
   } catch(e){
     $("polldot").classList.remove("ok");
-    showErr("picks fetch failed: "+e.message);
+    showErr("draft fetch failed: "+e.message);
   }
-  renderAll();
 }
-async function pollDraft(){
-  try { draft = await j(`${API}/draft/${draftId}`); } catch(e){}
+
+function synthesizeSold(){
+  // last_picked changed: prevMeta holds the nomination that just resolved
+  if (!prevMeta || !prevMeta.nominated_player_id) return;
+  const pid = String(prevMeta.nominated_player_id);
+  if (picks.some(p=>String(p.player_id)===pid)) return;
+  synth.push({
+    player_id: pid,
+    picked_by: ownerForSlot(prevMeta.offering_slot) || "",
+    draft_slot: parseInt(prevMeta.offering_slot||"0",10),
+    metadata: { amount: prevMeta.highest_offer || "1", slot: prevMeta.offering_slot,
+                synthetic: "1" },
+  });
+}
+
+async function refreshPicks(retries){
+  const before = picks.length;
+  try {
+    picks = MOCK ? mockPicks() : await j(`${API}/draft/${draftId}/picks?_=${Date.now()}`);
+    const have = new Set(picks.map(p=>String(p.player_id)));
+    synth = synth.filter(s=>!have.has(String(s.player_id)));
+  } catch(e){ /* keep last good */ }
+  if (picks.length <= before && retries > 0){
+    setTimeout(()=>refreshPicks(retries-1), 4000);
+  }
+  renderBlock(); renderAll();
+}
+
+function renderBlock(){
+  const el = $("block");
+  const m = (draft && draft.metadata) || {};
+  if (!draft || draft.status !== "drafting" || !m.nominated_player_id){
+    el.className = ""; el.innerHTML = ""; return;
+  }
+  const d = derive();
+  const pid = String(m.nominated_player_id);
+  const p = bySleeper.get(pid);
+  const bid = parseInt(m.highest_offer || "0", 10) || 0;
+  const bidder = slotTeamName(m.offering_slot);
+  const sold = d.takenById.has(pid);
+  let verdict, vclass;
+  if (sold){ verdict = "SOLD"; vclass = "SOLD"; }
+  else if (!p){ verdict = ""; vclass = ""; }
+  else {
+    const rec = recBid(p, d);
+    if (bid < rec){ verdict = "BID ≤ $" + rec; vclass = "BID"; }
+    else if (bid === rec){ verdict = "AT MAX"; vclass = "MAX"; }
+    else { verdict = "PASS"; vclass = "PASS"; }
+  }
+  const name = p ? p.name : "player " + pid;
+  const sub = p ? `${p.team||""} ${p.pos} · adj ${fmtMoney(adjVal(p,d))} · ${p.pos_rank} T${p.tier}` : "not in rankings — likely $1 dart";
+  const hover = (m.hovered_player_id && m.hovered_player_id !== pid && bySleeper.get(String(m.hovered_player_id)))
+    ? ` · nominator hovering: ${bySleeper.get(String(m.hovered_player_id)).name}` : "";
+  el.innerHTML = `<div class="toprow" ${p?`data-fp="${p.fp_id}"`:""}>
+      <div class="bname">${name}</div>
+      <div class="bid">$${bid}</div>
+      ${verdict?`<div class="verdict ${vclass}">${verdict}</div>`:""}
+    </div>
+    <div class="sub2">${sub} · high: ${bidder}${hover}</div>`;
+  el.className = "show";
 }
 
 function mockPicks(){
@@ -387,6 +497,17 @@ function mockPicks(){
     picked_by: owners[i%owners.length],
     metadata: {amount: String(Math.max(1, p.value + ((i%5)-2))), first_name:p.name.split(" ")[0], last_name:p.name.split(" ").slice(1).join(" "), position:p.pos}
   }));
+}
+
+function mockDraft(){
+  const n = parseInt(MOCK,10)||25;
+  const nom = players.filter(p=>p.sleeper_id).slice(n)[0];   // first untaken
+  const hov = players.filter(p=>p.sleeper_id).slice(n+3)[0];
+  return { status:"drafting", last_picked: n,
+    slot_to_roster_id: null,
+    metadata: { nominated_player_id: nom.sleeper_id, highest_offer: "7",
+                offering_slot: "3", nominating_slot: "5",
+                hovered_player_id: hov.sleeper_id } };
 }
 
 // ---------- wiring ----------
@@ -408,16 +529,19 @@ $("tab-plan").addEventListener("click", ()=>{
   $("tab-plan").classList.add("active"); $("tab-search").classList.remove("active");
   renderPlan();
 });
-document.addEventListener("visibilitychange", ()=>{ if (!document.hidden) pollPicks(); });
+$("block").addEventListener("click", e=>{
+  const r = e.target.closest(".toprow"); if (r && r.dataset.fp) openCard(r.dataset.fp);
+});
+document.addEventListener("visibilitychange", ()=>{ if (!document.hidden){ fastLoop(); refreshPicks(0); } });
 
 (async function init(){
   try {
     await loadStatic();
     await loadLeague();
-    await pollDraft();
-    await pollPicks();
-    pollTimer = setInterval(pollPicks, 2000);
-    draftTimer = setInterval(pollDraft, 15000);
+    await refreshPicks(0);
+    await fastLoop();
+    setInterval(fastLoop, 1500);        // nomination + high bid + sold detector
+    setInterval(()=>refreshPicks(0), 20000);  // slow reconcile of the pick list
   } catch(e){ showErr("init failed: "+e.message); }
 })();
 </script>
