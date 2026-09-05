@@ -278,6 +278,8 @@ let lastPickedTs = null;
 let lastSig = "";
 let prevMeta = null;         // last seen nomination metadata (for sold synthesis)
 let manual = [];             // manual overrides [{player_id, amount, mine}]
+let manualNom = null;        // manually flagged on-the-block {pid, ts}
+let lastApiNom = null;       // last nominated_player_id seen from the API
 
 const $ = id => document.getElementById(id);
 const norm = s => (s||"").toLowerCase().normalize("NFKD").replace(/[^a-z ]/g,"");
@@ -498,7 +500,8 @@ function manualButtons(p, t, d){
     <input id="mprice" type="number" inputmode="numeric" min="1" max="${BUDGET}" value="${def}">
     <button class="abtn mine" data-act="mine" data-sid="${p.sleeper_id}">＋ Mine</button>
     <button class="abtn other" data-act="other" data-sid="${p.sleeper_id}">Sold other</button>
-  </div>`;
+  </div>
+  <div class="btnrow"><button class="abtn other" data-act="nom" data-sid="${p.sleeper_id}">⚡ On the block now</button></div>`;
 }
 
 function renderPlan(){
@@ -673,8 +676,13 @@ async function fastLoop(){
       }
     }
     if (m.nominated_player_id) prevMeta = m;
+    if (m.nominated_player_id && m.nominated_player_id !== lastApiNom){
+      // API reported a (new) nomination — it supersedes any manual flag
+      lastApiNom = m.nominated_player_id;
+      manualNom = null;
+    }
     const sig = [draft.status, m.nominated_player_id, m.highest_offer, m.offering_slot,
-                 allPicks().length, $("search").value].join("|");
+                 allPicks().length, manualNom && manualNom.pid, $("search").value].join("|");
     if (sig !== lastSig){ lastSig = sig; renderBlock(); renderAll(); }
   } catch(e){
     $("polldot").classList.remove("ok");
@@ -712,14 +720,15 @@ async function refreshPicks(retries){
 function renderBlock(){
   const el = $("block");
   const m = (draft && draft.metadata) || {};
-  if (!draft || draft.status !== "drafting" || !m.nominated_player_id){
+  const useManual = manualNom && String(m.nominated_player_id||"") !== String(manualNom.pid);
+  if (!draft || (!m.nominated_player_id && !useManual) || (draft.status !== "drafting" && !useManual)){
     el.className = ""; el.innerHTML = ""; return;
   }
   const d = derive();
-  const pid = String(m.nominated_player_id);
+  const pid = useManual ? String(manualNom.pid) : String(m.nominated_player_id);
   const p = bySleeper.get(pid);
-  const bid = parseInt(m.highest_offer || "0", 10) || 0;
-  const bidder = slotTeamName(m.offering_slot);
+  const bid = useManual ? 0 : (parseInt(m.highest_offer || "0", 10) || 0);
+  const bidder = useManual ? "manual flag" : slotTeamName(m.offering_slot);
   const sold = d.takenById.has(pid);
   let verdict, vclass;
   if (sold){ verdict = "SOLD"; vclass = "SOLD"; }
@@ -734,10 +743,11 @@ function renderBlock(){
   const sub = p ? `${p.team||""} ${p.pos} · adj ${fmtMoney(adjVal(p,d))} · ${p.pos_rank} T${p.tier}${ppg(p)?` · ${ppg(p)} ppg`:""}${p.up!=null?` · up ${p.up}`:""}${p.bust!=null?` · bust ${p.bust}`:""}` : "not in rankings — likely $1 dart";
   const hover = (m.hovered_player_id && m.hovered_player_id !== pid && bySleeper.get(String(m.hovered_player_id)))
     ? ` · hovering: ${bySleeper.get(String(m.hovered_player_id)).name}` : "";
-  el.innerHTML = `<span class="livetag">On the block</span>
+  el.innerHTML = `<span class="livetag">${useManual?"On the block · manual":"On the block"}</span>
+    ${useManual?`<button class="mx" id="clearnom" style="position:absolute;top:8px;right:10px">✕</button>`:""}
     <div class="toprow" ${p?`data-fp="${p.fp_id}"`:""}>
       <div class="bname">${name}</div>
-      <div class="bid">$${bid}</div>
+      <div class="bid">${useManual?"":"$"+bid}</div>
       ${verdict?`<div class="verdict ${vclass}">${verdict}</div>`:""}
     </div>
     <div class="sub2">high: ${bidder} · ${sub}${hover}</div>`;
@@ -779,6 +789,7 @@ $("cardbody").addEventListener("click", e=>{
   const b = e.target.closest("[data-act]"); if (!b) return;
   const sid = b.dataset.sid;
   if (b.dataset.act==="undo"){ removeManual(sid); }
+  else if (b.dataset.act==="nom"){ manualNom = {pid:sid, ts:Date.now()}; lastSig=""; renderBlock(); }
   else {
     const amt = parseInt(($("mprice")||{}).value, 10) || 1;
     addManual(sid, amt, b.dataset.act==="mine");
@@ -793,6 +804,7 @@ for (const [tid, vid, fn] of TABS){
   });
 }
 $("block").addEventListener("click", e=>{
+  if (e.target.closest("#clearnom")){ manualNom = null; lastSig=""; renderBlock(); return; }
   const r = e.target.closest(".toprow"); if (r && r.dataset.fp) openCard(r.dataset.fp);
 });
 $("leaguesec").addEventListener("click", e=>{
@@ -830,7 +842,7 @@ document.addEventListener("visibilitychange", ()=>{ if (!document.hidden){ fastL
     loadManual();
     await refreshPicks(0);
     await fastLoop();
-    setInterval(fastLoop, 1500);        // nomination + high bid + sold detector
+    setInterval(fastLoop, 900);         // nomination + high bid + sold detector
     setInterval(()=>refreshPicks(0), 20000);  // slow reconcile of the pick list
   } catch(e){ showErr("init failed: "+e.message); }
 })();
