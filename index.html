@@ -2,100 +2,169 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Draft Assist</title>
+<meta name="theme-color" content="#070b09">
+<title>The Block — Draft Assist</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Spline+Sans+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0d1117; --panel: #161b22; --panel2: #1f2630; --line: #2d333b;
-    --fg: #e6edf3; --dim: #8b949e; --accent: #3fb950; --warn: #d29922;
-    --bad: #f85149; --blue: #58a6ff; --qb:#ff6bd6; --rb:#3fb950; --wr:#58a6ff; --te:#d29922; --k:#8b949e; --dst:#8b949e;
+    --ink: #070b09; --panel: #0e1512; --panel2: #15201b; --line: #24312a;
+    --fg: #e8f2ec; --dim: #7d8f86; --money: #f5c84c; --go: #2eea8b;
+    --stop: #ff5d5d; --hold: #ffb454;
+    --qb:#ff7ad9; --rb:#2eea8b; --wr:#5ac8ff; --te:#ffb454; --k:#7d8f86; --dst:#7d8f86;
+    --cond: "Barlow Condensed", "Avenir Next Condensed", sans-serif;
+    --mono: "Spline Sans Mono", ui-monospace, "SF Mono", monospace;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
-  #statusbar { position:sticky; top:0; z-index:10; background:var(--panel); border-bottom:1px solid var(--line);
-    padding:8px 12px calc(8px); display:flex; gap:10px; align-items:center; font-size:13px;
-    padding-top: calc(8px + env(safe-area-inset-top)); flex-wrap:wrap; }
-  #statusbar b { font-size:15px; }
-  .dot { width:8px; height:8px; border-radius:50%; background:var(--bad); flex:none; }
-  .dot.ok { background:var(--accent); }
+  html { background: var(--ink); }
+  body { margin:0; color:var(--fg); font: 15px/1.4 var(--mono);
+    background:
+      radial-gradient(120% 55% at 50% -10%, rgba(46,234,139,.07), transparent 60%),
+      repeating-linear-gradient(0deg, transparent 0 47px, rgba(232,242,236,.025) 47px 48px),
+      var(--ink);
+    padding-bottom: calc(66px + env(safe-area-inset-bottom)); }
+
+  /* ---------- status board ---------- */
+  #statusbar { position:sticky; top:0; z-index:10; background:rgba(14,21,18,.92);
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    border-bottom:1px solid var(--line);
+    padding:9px 14px 7px; padding-top: calc(9px + env(safe-area-inset-top));
+    display:flex; gap:14px; align-items:baseline; }
+  .st { display:flex; flex-direction:column; gap:0; }
+  .st .n { font:700 17px/1 var(--mono); color:var(--money); letter-spacing:-.02em; }
+  .st .l { font:700 9px/1.6 var(--cond); color:var(--dim); text-transform:uppercase; letter-spacing:.18em; }
+  .st.plain .n { color:var(--fg); }
   .spacer { flex:1; }
-  #search { width:100%; padding:12px 14px; font-size:18px; background:var(--panel2); color:var(--fg);
-    border:1px solid var(--line); border-radius:12px; outline:none; }
-  #search:focus { border-color:var(--blue); }
-  .wrap { padding:10px 12px; }
-  .row { display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); }
-  .row:active { background:var(--panel2); }
-  .pos { font-weight:700; font-size:12px; width:34px; flex:none; }
-  .pos.QB{color:var(--qb)} .pos.RB{color:var(--rb)} .pos.WR{color:var(--wr)} .pos.TE{color:var(--te)} .pos.K,.pos.DST{color:var(--k)}
-  .pname { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .pname small { color:var(--dim); }
-  .val { font-weight:700; font-size:17px; text-align:right; }
-  .val small { display:block; font-weight:400; font-size:11px; color:var(--dim); }
-  .taken { opacity:.45; }
-  .taken .val { color:var(--bad); font-size:14px; }
-  .inj { color:var(--bad); font-size:11px; font-weight:700; margin-left:4px; }
-  /* player card */
-  #card { position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.6); display:none; }
-  #card.open { display:flex; align-items:flex-end; }
-  #cardbody { background:var(--panel); width:100%; border-radius:16px 16px 0 0; padding:18px 16px calc(24px + env(safe-area-inset-bottom)); }
-  #cardbody h2 { margin:0 0 2px; font-size:22px; }
-  #cardbody .sub { color:var(--dim); font-size:13px; margin-bottom:14px; }
-  .bigbid { background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:14px; text-align:center; margin-bottom:12px; }
-  .bigbid .n { font-size:40px; font-weight:800; color:var(--accent); }
-  .bigbid.na .n { color:var(--bad); font-size:26px; }
-  .bigbid .l { font-size:12px; color:var(--dim); }
-  .stats { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:10px; }
-  .stat { background:var(--panel2); border-radius:10px; padding:8px; text-align:center; }
-  .stat .n { font-size:18px; font-weight:700; }
-  .stat .l { font-size:11px; color:var(--dim); }
-  .note { font-size:13px; color:var(--warn); text-align:center; min-height:18px; }
-  .soldline { text-align:center; color:var(--bad); font-weight:700; margin-bottom:8px; }
-  /* tabs */
-  #tabs { position:fixed; bottom:0; left:0; right:0; z-index:10; display:flex; background:var(--panel);
-    border-top:1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
-  #tabs button { flex:1; padding:14px 0 10px; background:none; border:none; color:var(--dim); font-size:14px; font-weight:600; }
-  #tabs button.active { color:var(--blue); }
-  h3 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin:18px 0 6px; }
-  .slotrow { display:flex; gap:8px; padding:8px 10px; border-bottom:1px solid var(--line); align-items:center; font-size:14px; }
-  .slotrow .sl { width:52px; flex:none; font-weight:700; color:var(--dim); font-size:12px; }
-  .slotrow .who { flex:1; }
-  .slotrow .amt { font-weight:700; }
-  .open-slot { color:var(--dim); font-style:italic; }
-  .hint { background:var(--panel2); border-left:3px solid var(--accent); border-radius:8px; padding:10px 12px; margin:8px 0; font-size:14px; }
-  details { border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-top:14px; }
-  summary { color:var(--dim); font-size:13px; }
-  .teamrow { display:flex; font-size:13px; padding:6px 0; border-bottom:1px solid var(--line); }
-  .teamrow .tn { flex:1; }
-  .teamrow.me .tn { color:var(--accent); font-weight:700; }
-  .muted { color:var(--dim); }
-  #err { color:var(--bad); font-size:12px; padding:4px 12px; display:none; }
-  /* on-the-block banner */
-  #block { display:none; margin:10px 12px 0; background:var(--panel2); border:1px solid var(--line);
-    border-radius:14px; padding:12px 14px; }
+  #draftstate { font:700 11px/1 var(--cond); color:var(--dim); text-transform:uppercase; letter-spacing:.14em;
+    display:flex; align-items:center; gap:6px; }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--stop); flex:none; }
+  .dot.ok { background:var(--go); box-shadow:0 0 6px var(--go); }
+
+  #err { color:var(--stop); font-size:11px; padding:4px 14px; display:none; }
+
+  /* ---------- ON THE BLOCK lower-third ---------- */
+  #block { display:none; margin:12px 12px 0; position:relative; overflow:hidden;
+    background: linear-gradient(100deg, var(--panel2) 0%, var(--panel) 70%);
+    border:1px solid var(--line); border-left:4px solid var(--go);
+    border-radius: 4px 14px 14px 4px; padding:10px 14px 11px;
+    animation: lowerthird .35s cubic-bezier(.2,.9,.3,1.2); }
   #block.show { display:block; }
-  #block .toprow { display:flex; align-items:baseline; gap:8px; }
-  #block .bname { font-size:20px; font-weight:800; flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  #block .bid { font-size:24px; font-weight:800; }
-  #block .verdict { font-size:15px; font-weight:800; padding:2px 10px; border-radius:8px; }
-  #block .verdict.BID { background:rgba(63,185,80,.15); color:var(--accent); }
-  #block .verdict.PASS { background:rgba(248,81,73,.15); color:var(--bad); }
-  #block .verdict.MAX { background:rgba(210,153,34,.15); color:var(--warn); }
-  #block .verdict.SOLD { background:rgba(139,148,158,.15); color:var(--dim); }
-  #block .sub2 { color:var(--dim); font-size:12px; margin-top:4px; }
+  @keyframes lowerthird { from { transform:translateY(-14px); opacity:0; } to { transform:none; opacity:1; } }
+  #block::before { content:""; position:absolute; inset:0 auto 0 0; width:120px;
+    background: linear-gradient(100deg, rgba(46,234,139,.09), transparent 75%); pointer-events:none; }
+  .livetag { display:inline-flex; align-items:center; gap:5px;
+    font:800 10px/1 var(--cond); letter-spacing:.24em; text-transform:uppercase; color:var(--go); }
+  .livetag::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--stop);
+    animation: blink 1.1s steps(2, jump-none) infinite; }
+  @keyframes blink { 50% { opacity:.25; } }
+  #block .toprow { display:flex; align-items:baseline; gap:10px; margin-top:2px; }
+  #block .bname { font:800 27px/1.05 var(--cond); letter-spacing:.01em; text-transform:uppercase;
+    flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #block .bid { font:700 26px/1 var(--mono); color:var(--money); letter-spacing:-.03em; }
+  #block .verdict { font:800 14px/1 var(--cond); letter-spacing:.08em; padding:5px 10px 4px;
+    border-radius:3px; transform: skewX(-8deg); text-transform:uppercase; }
+  #block .verdict.BID { background:var(--go); color:#04140b; box-shadow:0 0 14px rgba(46,234,139,.45); }
+  #block .verdict.PASS { background:var(--stop); color:#1c0505; }
+  #block .verdict.MAX { background:var(--hold); color:#1c1002; }
+  #block .verdict.SOLD { background:var(--line); color:var(--dim); }
+  #block .sub2 { font:500 10.5px/1.5 var(--mono); color:var(--dim); margin-top:4px;
+    text-transform:uppercase; letter-spacing:.04em; }
+
+  /* ---------- search ---------- */
+  .wrap { padding:12px 12px 6px; }
+  #search { width:100%; padding:12px 14px 11px; font:500 17px/1 var(--mono); background:var(--panel);
+    color:var(--fg); border:1px solid var(--line); border-radius:10px; outline:none; caret-color:var(--go); }
+  #search::placeholder { color:var(--dim); }
+  #search:focus { border-color:var(--go); box-shadow:0 0 0 1px var(--go); }
+
+  /* ---------- player rows ---------- */
+  .row { display:flex; align-items:center; gap:11px; padding:9px 14px 8px;
+    border-bottom:1px solid rgba(36,49,42,.55); }
+  .row:active { background:var(--panel2); }
+  .pos { font:800 12px/1 var(--cond); letter-spacing:.06em; width:36px; flex:none; text-align:center;
+    padding:5px 0 4px; border-radius:3px; background:var(--panel2); }
+  .pos.QB{color:var(--qb)} .pos.RB{color:var(--rb)} .pos.WR{color:var(--wr)}
+  .pos.TE{color:var(--te)} .pos.K,.pos.DST{color:var(--k)}
+  .pname { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    font:700 17.5px/1.15 var(--cond); letter-spacing:.015em; }
+  .pname small { display:block; font:500 9.5px/1.5 var(--mono); color:var(--dim);
+    text-transform:uppercase; letter-spacing:.05em; }
+  .val { text-align:right; font:700 17px/1.1 var(--mono); color:var(--money); letter-spacing:-.02em; }
+  .val small { display:block; font:400 9.5px/1.5 var(--mono); color:var(--dim); }
+  .taken { opacity:.4; }
+  .taken .val { color:var(--stop); font-size:13px; }
+  .inj { color:var(--stop); font:700 10px/1 var(--mono); margin-left:5px; vertical-align:2px; }
+
+  /* ---------- player card (bottom sheet) ---------- */
+  #card { position:fixed; inset:0; z-index:20; background:rgba(4,7,5,.72); display:none; }
+  #card.open { display:flex; align-items:flex-end; }
+  #cardbody { background:var(--panel); width:100%; border-top:1px solid var(--line);
+    border-radius:18px 18px 0 0; padding:16px 16px calc(26px + env(safe-area-inset-bottom));
+    animation: sheet .28s cubic-bezier(.2,.9,.3,1.1); }
+  @keyframes sheet { from { transform:translateY(40px); opacity:.4; } to { transform:none; opacity:1; } }
+  #cardbody::before { content:""; display:block; width:36px; height:4px; border-radius:2px;
+    background:var(--line); margin:0 auto 12px; }
+  #cardbody h2 { margin:0; font:800 30px/1 var(--cond); text-transform:uppercase; letter-spacing:.01em; }
+  #cardbody .sub { font:500 10.5px/1.6 var(--mono); color:var(--dim); text-transform:uppercase;
+    letter-spacing:.08em; margin:3px 0 13px; }
+  .bigbid { position:relative; overflow:hidden; background:var(--panel2); border:1px solid var(--line);
+    border-radius:14px; padding:13px 14px 11px; text-align:center; margin-bottom:12px; }
+  .bigbid::after { content:""; position:absolute; inset:auto 0 0 0; height:2px;
+    background:linear-gradient(90deg, transparent, var(--go), transparent); }
+  .bigbid .n { font:800 52px/1 var(--cond); color:var(--go); letter-spacing:-.01em;
+    text-shadow:0 0 22px rgba(46,234,139,.35); }
+  .bigbid .l { font:700 9.5px/2 var(--cond); color:var(--dim); text-transform:uppercase; letter-spacing:.22em; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-bottom:11px; }
+  .stat { background:var(--panel2); border-radius:9px; padding:8px 4px 6px; text-align:center; }
+  .stat .n { font:700 16px/1.2 var(--mono); letter-spacing:-.02em; }
+  .stat .n.gold { color:var(--money); }
+  .stat .l { font:700 8.5px/1.8 var(--cond); color:var(--dim); text-transform:uppercase; letter-spacing:.16em; }
+  .note { font:500 12px/1.5 var(--mono); color:var(--hold); text-align:center; min-height:18px; }
+  .soldline { text-align:center; color:var(--stop); font:800 18px/1.3 var(--cond);
+    text-transform:uppercase; letter-spacing:.06em; margin-bottom:10px; }
+
+  /* ---------- tabs ---------- */
+  #tabs { position:fixed; bottom:0; left:0; right:0; z-index:10; display:flex;
+    background:rgba(14,21,18,.94); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    border-top:1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  #tabs button { flex:1; padding:15px 0 11px; background:none; border:none; color:var(--dim);
+    font:800 14px/1 var(--cond); text-transform:uppercase; letter-spacing:.2em; position:relative; }
+  #tabs button.active { color:var(--fg); }
+  #tabs button.active::after { content:""; position:absolute; left:30%; right:30%; top:0; height:2px;
+    background:var(--go); box-shadow:0 0 8px var(--go); }
+
+  /* ---------- plan ---------- */
+  h3 { font:800 12px/1 var(--cond); text-transform:uppercase; letter-spacing:.24em; color:var(--dim);
+    margin:20px 2px 7px; padding-left:10px; border-left:3px solid var(--go); }
+  .slotrow { display:flex; gap:9px; padding:7px 10px 6px; border-bottom:1px solid rgba(36,49,42,.55);
+    align-items:baseline; }
+  .slotrow .sl { width:48px; flex:none; font:800 10.5px/1.4 var(--cond); color:var(--dim); letter-spacing:.1em; }
+  .slotrow .who { flex:1; font:700 16px/1.2 var(--cond); letter-spacing:.02em; }
+  .slotrow .who .muted { font:500 10px var(--mono); }
+  .slotrow .amt { font:700 14px/1.2 var(--mono); color:var(--money); }
+  .open-slot { color:var(--dim); font-style:italic; font-weight:600; }
+  .hint { background:var(--panel2); border:1px solid var(--line); border-left:3px solid var(--money);
+    border-radius:8px; padding:10px 12px; margin:10px 0 2px; font:500 12.5px/1.6 var(--mono); }
+  .hint b { color:var(--money); }
+  details { border:1px solid var(--line); border-radius:10px; padding:9px 12px; margin-top:16px; background:var(--panel); }
+  summary { font:800 11px/1 var(--cond); color:var(--dim); text-transform:uppercase; letter-spacing:.2em; }
+  .teamrow { display:flex; font:500 12px/1.4 var(--mono); padding:7px 0 6px; border-bottom:1px solid rgba(36,49,42,.55); }
+  .teamrow .tn { flex:1; font:700 14px var(--cond); letter-spacing:.03em; }
+  .teamrow.me .tn { color:var(--go); }
+  .muted { color:var(--dim); }
 </style>
 </head>
 <body>
 <div id="statusbar">
-  <span class="dot" id="polldot"></span>
-  <span><b id="mybudget">$200</b> left</span>
-  <span class="muted" id="myslots"></span>
-  <span class="muted" id="infl"></span>
+  <div class="st"><span class="n" id="mybudget">$200</span><span class="l">my budget</span></div>
+  <div class="st plain"><span class="n" id="myslots">17</span><span class="l">open</span></div>
+  <div class="st plain"><span class="n" id="infl">+0%</span><span class="l">inflation</span></div>
   <span class="spacer"></span>
-  <span class="muted" id="draftstate">…</span>
+  <span id="draftstate"><span class="dot" id="polldot"></span><span id="draftstatetext">…</span></span>
 </div>
 <div id="err"></div>
 <div id="block"></div>
@@ -121,7 +190,7 @@
 <div id="card"><div id="cardbody"></div></div>
 
 <div id="tabs">
-  <button id="tab-search" class="active">Search</button>
+  <button id="tab-search" class="active">The Block</button>
   <button id="tab-plan">My Plan</button>
 </div>
 
@@ -242,25 +311,28 @@ function recBid(p, d){
 
 // ---------- rendering ----------
 function fmtMoney(n){ return "$"+n; }
+function rangeStr(p){ return (p.rk_min && p.rk_max) ? "#"+p.rk_min+"–"+p.rk_max : "—"; }
 
 function renderStatus(d){
   $("mybudget").textContent = fmtMoney(d.myBudget);
-  $("myslots").textContent = d.myOpen + " slots open";
-  $("infl").textContent = "infl " + (d.inflation>0? Math.round((d.inflation-1)*100) : 0) + "%";
+  $("myslots").textContent = d.myOpen;
+  const pct = d.inflation>0 ? Math.round((d.inflation-1)*100) : 0;
+  $("infl").textContent = (pct>=0?"+":"")+pct+"%";
   const st = draft ? draft.status : "…";
-  $("draftstate").textContent = st.replace("_"," ") + " · " + allPicks().length + " picks";
+  $("draftstatetext").textContent = st.replace("_"," ") + " · " + allPicks().length + " picks";
 }
 
 function rowHtml(p, d){
   const t = d.takenById.get(p.sleeper_id);
   const a = adjVal(p,d);
   const injTag = p.inj ? `<span class="inj">${p.inj}</span>` : "";
+  const pts = p.pts ? ` · ${p.pts} pts` : "";
   const right = t
     ? `<div class="val">SOLD ${fmtMoney(t.amount)}<small>${teamName(t.owner)}</small></div>`
-    : `<div class="val">${fmtMoney(a)}<small>base ${fmtMoney(p.value)}</small></div>`;
+    : `<div class="val">${fmtMoney(a)}<small>base ${fmtMoney(p.value)}${pts}</small></div>`;
   return `<div class="row ${t?'taken':''}" data-fp="${p.fp_id}">
     <div class="pos ${p.pos}">${p.pos}</div>
-    <div class="pname">${p.name}${injTag}<br><small>${p.team||""} · ${p.pos_rank} · #${p.sf_rank<1000?p.sf_rank:"—"} · T${p.tier}</small></div>
+    <div class="pname">${p.name}${injTag}<small>${p.team||""} · ${p.pos_rank} · #${p.sf_rank<1000?p.sf_rank:"—"} · T${p.tier}</small></div>
     ${right}</div>`;
 }
 
@@ -301,21 +373,24 @@ function openCard(fpId){
   if (t) {
     bidBlock = `<div class="soldline">SOLD ${fmtMoney(t.amount)} → ${teamName(t.owner)}</div>`;
   } else if (!slot && d.openStarter.length>0 && p.pos!=="K" && p.pos!=="DST") {
-    bidBlock = `<div class="bigbid"><div class="n">${fmtMoney(rec)}</div><div class="l">max bid (bench depth)</div></div>`;
+    bidBlock = `<div class="bigbid"><div class="n">${fmtMoney(rec)}</div><div class="l">max bid · bench depth</div></div>`;
   } else {
     bidBlock = `<div class="bigbid"><div class="n">${fmtMoney(rec)}</div>
-      <div class="l">MY MAX BID · hard cap ${fmtMoney(d.myHardCap)}</div></div>`;
+      <div class="l">my max bid · hard cap ${fmtMoney(d.myHardCap)}</div></div>`;
   }
   $("cardbody").innerHTML = `
     <h2>${p.name} ${p.inj?`<span class="inj">${p.inj}</span>`:""}</h2>
     <div class="sub">${p.team||""} · ${p.pos} · bye ${p.bye||"?"}</div>
     ${bidBlock}
     <div class="stats">
-      <div class="stat"><div class="n">${fmtMoney(a)}</div><div class="l">adj value</div></div>
-      <div class="stat"><div class="n">${fmtMoney(p.value)}</div><div class="l">base value</div></div>
-      <div class="stat"><div class="n">${p.pos_rank}</div><div class="l">tier ${p.tier}</div></div>
+      <div class="stat"><div class="n gold">${fmtMoney(a)}</div><div class="l">adj value</div></div>
+      <div class="stat"><div class="n gold">${fmtMoney(p.value)}</div><div class="l">base value</div></div>
+      <div class="stat"><div class="n">${p.pts||"—"}</div><div class="l">proj pts</div></div>
+      <div class="stat"><div class="n">${p.pos_rank}</div><div class="l">pos rank</div></div>
+      <div class="stat"><div class="n">T${p.tier}</div><div class="l">tier</div></div>
+      <div class="stat"><div class="n">${rangeStr(p)}</div><div class="l">expert range</div></div>
     </div>
-    <div class="note">${t?"":slot?`fills your <b>${slot}</b>${scarce?` · +10% scarcity (${scarce})`:""}`:"no starter slot open — bench value"}</div>`;
+    <div class="note">${t?"":slot?`fills your <b>${slot.replace("SUPER_FLEX","SUPERFLEX")}</b>${scarce?` · +10% scarcity (${scarce})`:""}`:"no starter slot open — bench value"}</div>`;
   $("card").classList.add("open");
 }
 
@@ -345,9 +420,9 @@ function renderPlan(){
       avail.filter(p=>{const k=p.fp_id; if(seen.has(k))return false; seen.add(k); return true;})
            .map(p=>rowHtml(p,d)).join("");
   }
-  $("targets").innerHTML = html || `<div class="muted">all starter slots filled — hunt bench value</div>`;
+  $("targets").innerHTML = html || `<div class="muted" style="padding:8px 12px">all starter slots filled — hunt bench value</div>`;
   $("targethint").innerHTML = bestCliff && draft && draft.status==="drafting"
-    ? `<div class="hint">Biggest cliff: <b>${bestCliff.slot.replace("SUPER_FLEX","SUPERFLEX")}</b> — after ${bestCliff.top.name} (${fmtMoney(adjVal(bestCliff.top,derive()))}) value drops ${fmtMoney(bestCliff.cliff)}. Budget ${fmtMoney(d.myBudget)} across ${d.myOpen} slots.</div>`
+    ? `<div class="hint">Biggest cliff: <b>${bestCliff.slot.replace("SUPER_FLEX","SUPERFLEX")}</b> — after ${bestCliff.top.name} (${fmtMoney(adjVal(bestCliff.top,d))}) value drops ${fmtMoney(bestCliff.cliff)}. Budget ${fmtMoney(d.myBudget)} across ${d.myOpen} slots.</div>`
     : "";
   // team budgets
   const owners = [...new Set([MY_USER, ...allPicks().map(pickOwner)])];
@@ -378,7 +453,7 @@ function showErr(msg){
 }
 
 async function loadStatic(){
-  players = await j("players.json?v=1");
+  players = await j("players.json?v=2");
   bySleeper = new Map(players.filter(p=>p.sleeper_id).map(p=>[p.sleeper_id, p]));
 }
 
@@ -476,15 +551,16 @@ function renderBlock(){
     else { verdict = "PASS"; vclass = "PASS"; }
   }
   const name = p ? p.name : "player " + pid;
-  const sub = p ? `${p.team||""} ${p.pos} · adj ${fmtMoney(adjVal(p,d))} · ${p.pos_rank} T${p.tier}` : "not in rankings — likely $1 dart";
+  const sub = p ? `${p.team||""} ${p.pos} · adj ${fmtMoney(adjVal(p,d))} · ${p.pos_rank} T${p.tier}${p.pts?` · ${p.pts} pts`:""}` : "not in rankings — likely $1 dart";
   const hover = (m.hovered_player_id && m.hovered_player_id !== pid && bySleeper.get(String(m.hovered_player_id)))
-    ? ` · nominator hovering: ${bySleeper.get(String(m.hovered_player_id)).name}` : "";
-  el.innerHTML = `<div class="toprow" ${p?`data-fp="${p.fp_id}"`:""}>
+    ? ` · hovering: ${bySleeper.get(String(m.hovered_player_id)).name}` : "";
+  el.innerHTML = `<span class="livetag">On the block</span>
+    <div class="toprow" ${p?`data-fp="${p.fp_id}"`:""}>
       <div class="bname">${name}</div>
       <div class="bid">$${bid}</div>
       ${verdict?`<div class="verdict ${vclass}">${verdict}</div>`:""}
     </div>
-    <div class="sub2">${sub} · high: ${bidder}${hover}</div>`;
+    <div class="sub2">high: ${bidder} · ${sub}${hover}</div>`;
   el.className = "show";
 }
 

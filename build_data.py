@@ -151,6 +151,8 @@ def build() -> list[dict]:
                 "bye": e.get("player_bye_week"),
                 "value": value,
                 "pts": base["pts"] if base else 0,
+                "rk_min": int(e.get("rank_min") or 0) or None,
+                "rk_max": int(e.get("rank_max") or 0) or None,
                 "inj": base["inj"] if base else None,
                 "sleeper_id": sleeper_match(e["player_name"], pos, e["player_team_id"]),
             }
