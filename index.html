@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Draft Assist</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1f2630; --line: #2d333b;
+    --fg: #e6edf3; --dim: #8b949e; --accent: #3fb950; --warn: #d29922;
+    --bad: #f85149; --blue: #58a6ff; --qb:#ff6bd6; --rb:#3fb950; --wr:#58a6ff; --te:#d29922; --k:#8b949e; --dst:#8b949e;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  #statusbar { position:sticky; top:0; z-index:10; background:var(--panel); border-bottom:1px solid var(--line);
+    padding:8px 12px calc(8px); display:flex; gap:10px; align-items:center; font-size:13px;
+    padding-top: calc(8px + env(safe-area-inset-top)); flex-wrap:wrap; }
+  #statusbar b { font-size:15px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--bad); flex:none; }
+  .dot.ok { background:var(--accent); }
+  .spacer { flex:1; }
+  #search { width:100%; padding:12px 14px; font-size:18px; background:var(--panel2); color:var(--fg);
+    border:1px solid var(--line); border-radius:12px; outline:none; }
+  #search:focus { border-color:var(--blue); }
+  .wrap { padding:10px 12px; }
+  .row { display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--line); }
+  .row:active { background:var(--panel2); }
+  .pos { font-weight:700; font-size:12px; width:34px; flex:none; }
+  .pos.QB{color:var(--qb)} .pos.RB{color:var(--rb)} .pos.WR{color:var(--wr)} .pos.TE{color:var(--te)} .pos.K,.pos.DST{color:var(--k)}
+  .pname { flex:1; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .pname small { color:var(--dim); }
+  .val { font-weight:700; font-size:17px; text-align:right; }
+  .val small { display:block; font-weight:400; font-size:11px; color:var(--dim); }
+  .taken { opacity:.45; }
+  .taken .val { color:var(--bad); font-size:14px; }
+  .inj { color:var(--bad); font-size:11px; font-weight:700; margin-left:4px; }
+  /* player card */
+  #card { position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.6); display:none; }
+  #card.open { display:flex; align-items:flex-end; }
+  #cardbody { background:var(--panel); width:100%; border-radius:16px 16px 0 0; padding:18px 16px calc(24px + env(safe-area-inset-bottom)); }
+  #cardbody h2 { margin:0 0 2px; font-size:22px; }
+  #cardbody .sub { color:var(--dim); font-size:13px; margin-bottom:14px; }
+  .bigbid { background:var(--panel2); border:1px solid var(--line); border-radius:14px; padding:14px; text-align:center; margin-bottom:12px; }
+  .bigbid .n { font-size:40px; font-weight:800; color:var(--accent); }
+  .bigbid.na .n { color:var(--bad); font-size:26px; }
+  .bigbid .l { font-size:12px; color:var(--dim); }
+  .stats { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:10px; }
+  .stat { background:var(--panel2); border-radius:10px; padding:8px; text-align:center; }
+  .stat .n { font-size:18px; font-weight:700; }
+  .stat .l { font-size:11px; color:var(--dim); }
+  .note { font-size:13px; color:var(--warn); text-align:center; min-height:18px; }
+  .soldline { text-align:center; color:var(--bad); font-weight:700; margin-bottom:8px; }
+  /* tabs */
+  #tabs { position:fixed; bottom:0; left:0; right:0; z-index:10; display:flex; background:var(--panel);
+    border-top:1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  #tabs button { flex:1; padding:14px 0 10px; background:none; border:none; color:var(--dim); font-size:14px; font-weight:600; }
+  #tabs button.active { color:var(--blue); }
+  h3 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin:18px 0 6px; }
+  .slotrow { display:flex; gap:8px; padding:8px 10px; border-bottom:1px solid var(--line); align-items:center; font-size:14px; }
+  .slotrow .sl { width:52px; flex:none; font-weight:700; color:var(--dim); font-size:12px; }
+  .slotrow .who { flex:1; }
+  .slotrow .amt { font-weight:700; }
+  .open-slot { color:var(--dim); font-style:italic; }
+  .hint { background:var(--panel2); border-left:3px solid var(--accent); border-radius:8px; padding:10px 12px; margin:8px 0; font-size:14px; }
+  details { border:1px solid var(--line); border-radius:10px; padding:8px 12px; margin-top:14px; }
+  summary { color:var(--dim); font-size:13px; }
+  .teamrow { display:flex; font-size:13px; padding:6px 0; border-bottom:1px solid var(--line); }
+  .teamrow .tn { flex:1; }
+  .teamrow.me .tn { color:var(--accent); font-weight:700; }
+  .muted { color:var(--dim); }
+  #err { color:var(--bad); font-size:12px; padding:4px 12px; display:none; }
+</style>
+</head>
+<body>
+<div id="statusbar">
+  <span class="dot" id="polldot"></span>
+  <span><b id="mybudget">$200</b> left</span>
+  <span class="muted" id="myslots"></span>
+  <span class="muted" id="infl"></span>
+  <span class="spacer"></span>
+  <span class="muted" id="draftstate">…</span>
+</div>
+<div id="err"></div>
+
+<div id="view-search">
+  <div class="wrap">
+    <input id="search" type="search" placeholder="Search player…" autocomplete="off" autocorrect="off" spellcheck="false">
+  </div>
+  <div id="results"></div>
+</div>
+
+<div id="view-plan" style="display:none">
+  <div class="wrap">
+    <div id="targethint"></div>
+    <h3>My roster</h3>
+    <div id="myroster"></div>
+    <h3>Best available for my open slots</h3>
+    <div id="targets"></div>
+    <details><summary>All team budgets</summary><div id="teams"></div></details>
+  </div>
+</div>
+
+<div id="card"><div id="cardbody"></div></div>
+
+<div id="tabs">
+  <button id="tab-search" class="active">Search</button>
+  <button id="tab-plan">My Plan</button>
+</div>
+
+<script>
+"use strict";
+const Q = new URLSearchParams(location.search);
+const LEAGUE_ID = Q.get("league") || "1399865638406627328";
+const MY_USER = Q.get("user") || "1399880454529658880";
+const DRAFT_OVERRIDE = Q.get("draft");
+const MOCK = Q.get("mock");
+const BUDGET = 200;
+const STARTERS = ["QB","RB","RB","WR","WR","TE","FLEX","SUPER_FLEX","K","DEF"];
+const BENCH = 7;
+const TEAMS = 10;
+const SLOT_ELIG = { QB:["QB"], RB:["RB"], WR:["WR"], TE:["TE"], K:["K"], DEF:["DST"],
+                    FLEX:["RB","WR","TE"], SUPER_FLEX:["QB","RB","WR","TE"] };
+const API = "https://api.sleeper.app/v1";
+
+let players = [];            // static values data, sf_rank order
+let bySleeper = new Map();
+let picks = [];              // raw sleeper picks
+let draft = null;
+let users = new Map();       // user_id -> display_name
+let draftId = DRAFT_OVERRIDE;
+let lastErr = "";
+
+const $ = id => document.getElementById(id);
+const norm = s => (s||"").toLowerCase().normalize("NFKD").replace(/[^a-z ]/g,"");
+
+// ---------- derived state ----------
+function pickAmount(p){ const m = p.metadata||{}; return parseInt(m.amount ?? m.price ?? m.bid ?? 0, 10) || 0; }
+function pickOwner(p){ return p.picked_by || ("slot"+(p.draft_slot ?? p.roster_id ?? "?")); }
+
+function derive(){
+  const takenById = new Map();      // sleeper player_id -> {amount, owner}
+  const spentBy = new Map();        // owner -> $
+  const countBy = new Map();        // owner -> picks
+  for (const p of picks){
+    const owner = pickOwner(p);
+    const amt = pickAmount(p);
+    takenById.set(String(p.player_id), {amount: amt, owner});
+    spentBy.set(owner, (spentBy.get(owner)||0) + amt);
+    countBy.set(owner, (countBy.get(owner)||0) + 1);
+  }
+  const totalSlots = TEAMS * (STARTERS.length + BENCH);
+  const leagueOpen = Math.max(0, totalSlots - picks.length);
+  const remainingPool = TEAMS*BUDGET - [...spentBy.values()].reduce((a,b)=>a+b,0);
+  // inflation: remaining $ vs baseline value of the players that will fill remaining slots
+  const availVals = players.filter(p => p.sleeper_id && !takenById.has(p.sleeper_id)).map(p=>p.value)
+                           .sort((a,b)=>b-a).slice(0, leagueOpen);
+  const remainingValue = availVals.reduce((a,b)=>a+Math.max(b,1),0);
+  const inflation = remainingValue > 0 ? remainingPool / remainingValue : 1;
+
+  // my roster slot assignment (greedy: dedicated slot first, then FLEX/SF, then BN)
+  const myPicks = picks.filter(p => p.picked_by === MY_USER)
+    .map(p => ({ raw:p, amount:pickAmount(p), pl: bySleeper.get(String(p.player_id)),
+                 name: bySleeper.get(String(p.player_id))?.name ||
+                       ((p.metadata||{}).first_name+" "+(p.metadata||{}).last_name),
+                 pos: bySleeper.get(String(p.player_id))?.pos || (p.metadata||{}).position || "?" }))
+    .sort((a,b)=>b.amount-a.amount);
+  const slots = STARTERS.map(s => ({slot:s, fill:null}));
+  for (const mp of myPicks){
+    let placed = slots.find(s => !s.fill && (SLOT_ELIG[s.slot]||[]).includes(mp.pos==="DEF"?"DST":mp.pos));
+    if (placed) placed.fill = mp; else slots.push({slot:"BN", fill:mp});
+  }
+  const bnUsed = slots.filter(s=>s.slot==="BN").length;
+  for (let i=bnUsed; i<BENCH; i++) slots.push({slot:"BN", fill:null});
+  const myOpen = slots.filter(s=>!s.fill).length;
+  const mySpent = spentBy.get(MY_USER)||0;
+  const myBudget = BUDGET - mySpent;
+  const myHardCap = Math.max(1, myBudget - Math.max(0, myOpen-1));  // keep $1/slot
+  const openStarter = slots.filter(s=>!s.fill && s.slot!=="BN").map(s=>s.slot);
+
+  return {takenById, spentBy, countBy, inflation, remainingPool, leagueOpen,
+          myPicks, slots, myOpen, myBudget, myHardCap, openStarter};
+}
+
+function adjVal(p, d){ return p.value<=1 ? 1 : Math.max(1, Math.round(p.value * d.inflation)); }
+
+function scarceFor(p, d){
+  const pos = p.pos==="DEF"?"DST":p.pos;
+  if (pos==="QB" && (d.openStarter.includes("QB")||d.openStarter.includes("SUPER_FLEX"))) return "QB (superflex)";
+  if (pos==="RB" && d.openStarter.includes("RB")) return "RB";
+  return null;
+}
+
+function fillsSlot(p, d){
+  const pos = p.pos==="DEF"?"DST":p.pos;
+  for (const s of d.openStarter) if ((SLOT_ELIG[s]||[]).includes(pos)) return s;
+  return null;
+}
+
+function recBid(p, d){
+  const a = adjVal(p,d);
+  const scarce = scarceFor(p,d);
+  let rec = scarce ? Math.round(a*1.10) : a;
+  return Math.min(rec, d.myHardCap);
+}
+
+// ---------- rendering ----------
+function fmtMoney(n){ return "$"+n; }
+
+function renderStatus(d){
+  $("mybudget").textContent = fmtMoney(d.myBudget);
+  $("myslots").textContent = d.myOpen + " slots open";
+  $("infl").textContent = "infl " + (d.inflation>0? Math.round((d.inflation-1)*100) : 0) + "%";
+  const st = draft ? draft.status : "…";
+  $("draftstate").textContent = st.replace("_"," ") + " · " + picks.length + " picks";
+}
+
+function rowHtml(p, d){
+  const t = d.takenById.get(p.sleeper_id);
+  const a = adjVal(p,d);
+  const injTag = p.inj ? `<span class="inj">${p.inj}</span>` : "";
+  const right = t
+    ? `<div class="val">SOLD ${fmtMoney(t.amount)}<small>${teamName(t.owner)}</small></div>`
+    : `<div class="val">${fmtMoney(a)}<small>base ${fmtMoney(p.value)}</small></div>`;
+  return `<div class="row ${t?'taken':''}" data-fp="${p.fp_id}">
+    <div class="pos ${p.pos}">${p.pos}</div>
+    <div class="pname">${p.name}${injTag}<br><small>${p.team||""} · ${p.pos_rank} · #${p.sf_rank<1000?p.sf_rank:"—"} · T${p.tier}</small></div>
+    ${right}</div>`;
+}
+
+function renderSearch(){
+  const d = derive();
+  renderStatus(d);
+  const q = norm($("search").value);
+  let list;
+  if (!q) {
+    list = players.filter(p => !d.takenById.get(p.sleeper_id)).slice(0, 30);
+  } else {
+    const starts=[], subs=[];
+    for (const p of players){
+      const n = norm(p.name);
+      if (n.startsWith(q) || n.split(" ").some(w=>w.startsWith(q))) starts.push(p);
+      else if (n.includes(q)) subs.push(p);
+      if (starts.length>15) break;
+    }
+    list = starts.concat(subs).slice(0,15);
+  }
+  $("results").innerHTML = list.map(p=>rowHtml(p,d)).join("");
+}
+
+function teamName(owner){
+  return users.get(owner) || (owner===MY_USER?"me":String(owner).slice(0,8));
+}
+
+function openCard(fpId){
+  const p = players.find(x=>x.fp_id===fpId);
+  if (!p) return;
+  const d = derive();
+  const t = d.takenById.get(p.sleeper_id);
+  const a = adjVal(p,d);
+  const slot = fillsSlot(p,d);
+  const scarce = scarceFor(p,d);
+  const rec = recBid(p,d);
+  let bidBlock;
+  if (t) {
+    bidBlock = `<div class="soldline">SOLD ${fmtMoney(t.amount)} → ${teamName(t.owner)}</div>`;
+  } else if (!slot && d.openStarter.length>0 && p.pos!=="K" && p.pos!=="DST") {
+    bidBlock = `<div class="bigbid"><div class="n">${fmtMoney(rec)}</div><div class="l">max bid (bench depth)</div></div>`;
+  } else {
+    bidBlock = `<div class="bigbid"><div class="n">${fmtMoney(rec)}</div>
+      <div class="l">MY MAX BID · hard cap ${fmtMoney(d.myHardCap)}</div></div>`;
+  }
+  $("cardbody").innerHTML = `
+    <h2>${p.name} ${p.inj?`<span class="inj">${p.inj}</span>`:""}</h2>
+    <div class="sub">${p.team||""} · ${p.pos} · bye ${p.bye||"?"}</div>
+    ${bidBlock}
+    <div class="stats">
+      <div class="stat"><div class="n">${fmtMoney(a)}</div><div class="l">adj value</div></div>
+      <div class="stat"><div class="n">${fmtMoney(p.value)}</div><div class="l">base value</div></div>
+      <div class="stat"><div class="n">${p.pos_rank}</div><div class="l">tier ${p.tier}</div></div>
+    </div>
+    <div class="note">${t?"":slot?`fills your <b>${slot}</b>${scarce?` · +10% scarcity (${scarce})`:""}`:"no starter slot open — bench value"}</div>`;
+  $("card").classList.add("open");
+}
+
+function renderPlan(){
+  const d = derive();
+  renderStatus(d);
+  // roster
+  $("myroster").innerHTML = d.slots.map(s => `<div class="slotrow">
+      <div class="sl">${s.slot.replace("SUPER_FLEX","SFLX")}</div>
+      ${s.fill? `<div class="who">${s.fill.name} <span class="muted">${s.fill.pos}</span></div><div class="amt">${fmtMoney(s.fill.amount)}</div>`
+              : `<div class="who open-slot">open</div>`}
+    </div>`).join("");
+  // targets per open starter slot
+  const seen = new Set();
+  let html = "";
+  let bestCliff = null;
+  for (const slot of [...new Set(d.openStarter)]){
+    const elig = SLOT_ELIG[slot]||[];
+    const avail = players.filter(p => p.sleeper_id && !d.takenById.get(p.sleeper_id)
+                                      && elig.includes(p.pos==="DEF"?"DST":p.pos))
+                         .slice(0, 4);
+    if (!avail.length) continue;
+    const a0 = adjVal(avail[0],d), a3 = adjVal(avail[Math.min(3,avail.length-1)],d);
+    const cliff = a0 - a3;
+    if (!bestCliff || cliff > bestCliff.cliff) bestCliff = {slot, cliff, top: avail[0]};
+    html += `<h3>${slot.replace("SUPER_FLEX","SUPERFLEX")}</h3>` +
+      avail.filter(p=>{const k=p.fp_id; if(seen.has(k))return false; seen.add(k); return true;})
+           .map(p=>rowHtml(p,d)).join("");
+  }
+  $("targets").innerHTML = html || `<div class="muted">all starter slots filled — hunt bench value</div>`;
+  $("targethint").innerHTML = bestCliff && draft && draft.status==="drafting"
+    ? `<div class="hint">Biggest cliff: <b>${bestCliff.slot.replace("SUPER_FLEX","SUPERFLEX")}</b> — after ${bestCliff.top.name} (${fmtMoney(adjVal(bestCliff.top,derive()))}) value drops ${fmtMoney(bestCliff.cliff)}. Budget ${fmtMoney(d.myBudget)} across ${d.myOpen} slots.</div>`
+    : "";
+  // team budgets
+  const owners = [...new Set([MY_USER, ...picks.map(pickOwner)])];
+  $("teams").innerHTML = owners.map(o=>{
+    const spent = d.spentBy.get(o)||0, cnt = d.countBy.get(o)||0;
+    const open = STARTERS.length+BENCH-cnt;
+    const cap = Math.max(0, BUDGET-spent - Math.max(0,open-1));
+    return `<div class="teamrow ${o===MY_USER?'me':''}"><div class="tn">${teamName(o)}</div>
+      <div>${fmtMoney(BUDGET-spent)} · ${cnt}/17 · max ${fmtMoney(cap)}</div></div>`;
+  }).join("");
+}
+
+function renderAll(){
+  if ($("view-search").style.display!=="none") renderSearch(); else renderPlan();
+}
+
+// ---------- data loading / polling ----------
+async function j(url){
+  const r = await fetch(url, {cache:"no-store"});
+  if (!r.ok) throw new Error(r.status+" "+url);
+  return r.json();
+}
+
+function showErr(msg){
+  const e = $("err");
+  if (!msg){ e.style.display="none"; return; }
+  e.textContent = msg; e.style.display="block";
+}
+
+async function loadStatic(){
+  players = await j("players.json?v=1");
+  bySleeper = new Map(players.filter(p=>p.sleeper_id).map(p=>[p.sleeper_id, p]));
+}
+
+async function loadLeague(){
+  try {
+    const us = await j(`${API}/league/${LEAGUE_ID}/users`);
+    users = new Map(us.map(u=>[u.user_id, u.display_name]));
+  } catch(e){ /* names are cosmetic */ }
+  if (!draftId){
+    const ds = await j(`${API}/league/${LEAGUE_ID}/drafts`);
+    const d = ds.find(x=>x.status!=="complete") || ds[0];
+    draftId = d.draft_id;
+    draft = d;
+  }
+}
+
+let pollTimer=null, draftTimer=null;
+async function pollPicks(){
+  try {
+    picks = MOCK ? mockPicks() : await j(`${API}/draft/${draftId}/picks`);
+    $("polldot").classList.add("ok");
+    showErr("");
+  } catch(e){
+    $("polldot").classList.remove("ok");
+    showErr("picks fetch failed: "+e.message);
+  }
+  renderAll();
+}
+async function pollDraft(){
+  try { draft = await j(`${API}/draft/${draftId}`); } catch(e){}
+}
+
+function mockPicks(){
+  // ?mock=N takes the top N players as fake picks at ~value prices, round-robin owners
+  const n = parseInt(MOCK,10)||25;
+  const owners = ["1399880454529658880","743253553073754112","886058514131599360","1125335302740008960","1135396859960610816"];
+  return players.filter(p=>p.sleeper_id).slice(0,n).map((p,i)=>({
+    player_id: p.sleeper_id, draft_slot: (i%10)+1,
+    picked_by: owners[i%owners.length],
+    metadata: {amount: String(Math.max(1, p.value + ((i%5)-2))), first_name:p.name.split(" ")[0], last_name:p.name.split(" ").slice(1).join(" "), position:p.pos}
+  }));
+}
+
+// ---------- wiring ----------
+$("search").addEventListener("input", renderSearch);
+$("results").addEventListener("click", e=>{
+  const r = e.target.closest(".row"); if (r) openCard(r.dataset.fp);
+});
+$("targets").addEventListener("click", e=>{
+  const r = e.target.closest(".row"); if (r) openCard(r.dataset.fp);
+});
+$("card").addEventListener("click", e=>{ if (e.target.id==="card") $("card").classList.remove("open"); });
+$("tab-search").addEventListener("click", ()=>{
+  $("view-search").style.display=""; $("view-plan").style.display="none";
+  $("tab-search").classList.add("active"); $("tab-plan").classList.remove("active");
+  renderSearch();
+});
+$("tab-plan").addEventListener("click", ()=>{
+  $("view-search").style.display="none"; $("view-plan").style.display="";
+  $("tab-plan").classList.add("active"); $("tab-search").classList.remove("active");
+  renderPlan();
+});
+document.addEventListener("visibilitychange", ()=>{ if (!document.hidden) pollPicks(); });
+
+(async function init(){
+  try {
+    await loadStatic();
+    await loadLeague();
+    await pollDraft();
+    await pollPicks();
+    pollTimer = setInterval(pollPicks, 2000);
+    draftTimer = setInterval(pollDraft, 15000);
+  } catch(e){ showErr("init failed: "+e.message); }
+})();
+</script>
+</body>
+</html>
