@@ -134,6 +134,12 @@
   .mrow .ma { font:700 14px var(--mono); color:var(--money); }
   .mrow .mx { font:800 15px/1 var(--cond); color:var(--stop); padding:6px 10px; background:var(--panel2);
     border-radius:6px; border:1px solid var(--line); }
+  .didrow { display:flex; gap:8px; padding:8px 0 4px; }
+  .didrow input { flex:1; min-width:0; font:500 13px var(--mono); color:var(--fg); background:var(--panel2);
+    border:1px solid var(--line); border-radius:8px; padding:10px 10px 9px; outline:none; }
+  .didrow input:focus { border-color:var(--go); }
+  .didrow button { font:800 13px/1 var(--cond); letter-spacing:.1em; text-transform:uppercase;
+    background:var(--go); color:#04140b; border:none; border-radius:8px; padding:0 16px; }
   .stat .n.up { color:var(--go); }
   .stat .n.bust { color:var(--stop); }
 
@@ -587,6 +593,7 @@ async function showDraftList(){
     </div>`);
   } catch(e){ rows = [`<div class="noresult">could not load drafts: ${e.message}</div>`]; }
   rows.unshift(`<div class="mrow" data-did=""><span class="tag mine">HOME</span><div class="mn">normie fantasy (default league)</div></div>`);
+  rows.unshift(`<div class="didrow"><input id="didinput" inputmode="numeric" placeholder="paste draft URL or ID (e.g. a mock)"><button id="didgo">Go</button></div>`);
   el.innerHTML = rows.join("");
 }
 
@@ -791,7 +798,15 @@ $("block").addEventListener("click", e=>{
 $("leaguesec").addEventListener("click", e=>{
   if (e.target.closest("#changedraft")) showDraftList();
 });
-$("draftlist").addEventListener("click", e=>{
+$("draftlist").addEventListener("click", async e=>{
+  if (e.target.closest("#didgo")){
+    const raw = ($("didinput")||{}).value || "";
+    const m = raw.match(/\d{15,}/);
+    if (!m){ alert("no draft id found in that text"); return; }
+    try { await j(`${API}/draft/${m[0]}?_=${Date.now()}`); } catch(err){ alert("draft not found: "+m[0]); return; }
+    switchDraft(m[0]);
+    return;
+  }
   const r = e.target.closest("[data-did]"); if (r) switchDraft(r.dataset.did);
 });
 $("manualsec").addEventListener("click", e=>{
