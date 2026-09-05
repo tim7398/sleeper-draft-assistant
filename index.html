@@ -110,6 +110,16 @@
   .statpips.up b.on { background:var(--go); }
   .statpips.bust b.on { background:var(--stop); }
   .noresult { padding:26px 14px; text-align:center; font:500 13px var(--mono); color:var(--dim); }
+  .btnrow { display:flex; gap:8px; margin-top:12px; }
+  .btnrow input { width:86px; text-align:center; font:700 18px var(--mono); color:var(--money);
+    background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:11px 6px 10px; outline:none; }
+  .btnrow input:focus { border-color:var(--money); }
+  .abtn { flex:1; border:none; border-radius:10px; padding:12px 4px 11px;
+    font:800 14px/1 var(--cond); letter-spacing:.1em; text-transform:uppercase; }
+  .abtn.mine { background:var(--go); color:#04140b; }
+  .abtn.other { background:var(--panel2); color:var(--fg); border:1px solid var(--line); }
+  .abtn.undo { background:var(--stop); color:#1c0505; }
+  .manualtag { font:700 10px var(--mono); color:var(--hold); }
   .stat .n.up { color:var(--go); }
   .stat .n.bust { color:var(--stop); }
 
@@ -234,6 +244,7 @@ let draftId = DRAFT_OVERRIDE;
 let lastPickedTs = null;
 let lastSig = "";
 let prevMeta = null;         // last seen nomination metadata (for sold synthesis)
+let manual = [];             // manual overrides [{player_id, amount, mine}]
 
 const $ = id => document.getElementById(id);
 const norm = s => (s||"").toLowerCase().normalize("NFKD").replace(/[^a-z ]/g,"");
@@ -251,9 +262,27 @@ function slotTeamName(slot){
   const uid = ownerForSlot(slot);
   return uid ? teamName(uid) : (slot!=null ? "slot "+slot : "?");
 }
+function manualAsPicks(){
+  return manual.map(m=>({ player_id:m.player_id, picked_by: m.mine?MY_USER:"manual_other",
+    draft_slot:0, metadata:{amount:String(m.amount), manual:"1"} }));
+}
 function allPicks(){
   const have = new Set(picks.map(p=>String(p.player_id)));
-  return picks.concat(synth.filter(s=>!have.has(String(s.player_id))));
+  const extra = synth.concat(manualAsPicks()).filter(s=>!have.has(String(s.player_id)));
+  const seen = new Set();
+  return picks.concat(extra.filter(e=>{ const k=String(e.player_id); if(seen.has(k)||have.has(k)) return false; seen.add(k); return true; }));
+}
+function manualKey(){ return "manual_picks_"+(draftId||"x"); }
+function loadManual(){ try { manual = JSON.parse(localStorage.getItem(manualKey())||"[]"); } catch(e){ manual=[]; } }
+function saveManual(){ try { localStorage.setItem(manualKey(), JSON.stringify(manual)); } catch(e){} }
+function addManual(pid, amount, mine){
+  manual = manual.filter(m=>String(m.player_id)!==String(pid));
+  manual.push({player_id:String(pid), amount: Math.max(1, amount|0), mine: !!mine});
+  saveManual(); renderBlock(); renderAll();
+}
+function removeManual(pid){
+  manual = manual.filter(m=>String(m.player_id)!==String(pid));
+  saveManual(); renderBlock(); renderAll();
 }
 
 function derive(){
@@ -380,6 +409,7 @@ function renderSearch(){
 }
 
 function teamName(owner){
+  if (owner==="manual_other") return "other (manual)";
   return users.get(owner) || (owner===MY_USER?"me":String(owner).slice(0,8));
 }
 
@@ -416,8 +446,26 @@ function openCard(fpId){
       <div class="stat"><div class="n ${p.bust>=7?'bust':''}">${p.bust!=null?p.bust+"/10":"—"}</div>${pipsHtml(p.bust,'bust','statpips')}<div class="l">bust risk</div></div>
       <div class="stat"><div class="n">${p.sos?p.sos+"★":"—"}</div><div class="l">sos season</div></div>
     </div>
-    <div class="note">${t?"":slot?`fills your <b>${slot.replace("SUPER_FLEX","SUPERFLEX")}</b>${scarce?` · +10% scarcity (${scarce})`:""}`:"no starter slot open — bench value"}</div>`;
+    <div class="note">${t?"":slot?`fills your <b>${slot.replace("SUPER_FLEX","SUPERFLEX")}</b>${scarce?` · +10% scarcity (${scarce})`:""}`:"no starter slot open — bench value"}</div>
+    ${manualButtons(p, t, d)}`;
   $("card").classList.add("open");
+}
+
+function manualButtons(p, t, d){
+  if (!p.sleeper_id) return "";
+  const isManual = manual.some(m=>String(m.player_id)===String(p.sleeper_id));
+  if (t && !isManual) return "";   // real API pick — nothing to override
+  if (isManual){
+    return `<div class="btnrow"><button class="abtn undo" data-act="undo" data-sid="${p.sleeper_id}">Undo manual ${t&&t.owner===MY_USER?"(mine)":"(sold)"}</button></div>`;
+  }
+  const m = (draft && draft.metadata) || {};
+  const nomBid = String(m.nominated_player_id)===String(p.sleeper_id) ? (parseInt(m.highest_offer||"0",10)||0) : 0;
+  const def = nomBid || recBid(p, d);
+  return `<div class="btnrow">
+    <input id="mprice" type="number" inputmode="numeric" min="1" max="${BUDGET}" value="${def}">
+    <button class="abtn mine" data-act="mine" data-sid="${p.sleeper_id}">＋ Mine</button>
+    <button class="abtn other" data-act="other" data-sid="${p.sleeper_id}">Sold other</button>
+  </div>`;
 }
 
 function renderPlan(){
@@ -621,6 +669,16 @@ $("targets").addEventListener("click", e=>{
   const r = e.target.closest(".row"); if (r) openCard(r.dataset.fp);
 });
 $("card").addEventListener("click", e=>{ if (e.target.id==="card") $("card").classList.remove("open"); });
+$("cardbody").addEventListener("click", e=>{
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  const sid = b.dataset.sid;
+  if (b.dataset.act==="undo"){ removeManual(sid); }
+  else {
+    const amt = parseInt(($("mprice")||{}).value, 10) || 1;
+    addManual(sid, amt, b.dataset.act==="mine");
+  }
+  $("card").classList.remove("open");
+});
 $("tab-search").addEventListener("click", ()=>{
   $("view-search").style.display=""; $("view-plan").style.display="none";
   $("tab-search").classList.add("active"); $("tab-plan").classList.remove("active");
@@ -640,6 +698,7 @@ document.addEventListener("visibilitychange", ()=>{ if (!document.hidden){ fastL
   try {
     await loadStatic();
     await loadLeague();
+    loadManual();
     await refreshPicks(0);
     await fastLoop();
     setInterval(fastLoop, 1500);        // nomination + high bid + sold detector
