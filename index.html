@@ -200,6 +200,35 @@
   .teamrow .tn { flex:1; font:700 14px var(--cond); letter-spacing:.03em; }
   .teamrow.me .tn { color:var(--go); }
   .muted { color:var(--dim); }
+  /* scarcity strip */
+  #scarcity { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; margin:2px 0 4px; }
+  .scell { background:var(--panel); border:1px solid var(--line); border-radius:9px; padding:7px 4px 5px; text-align:center; }
+  .scell .p { font:800 11px/1 var(--cond); letter-spacing:.1em; }
+  .scell .c { font:700 15px/1.4 var(--mono); }
+  .scell .c.hot { color:var(--stop); }
+  .scell .cl { font:500 8.5px/1.4 var(--mono); color:var(--dim); }
+  .qstar { font-size:18px; background:none; border:none; color:var(--money); padding:8px; }
+  /* desktop: side-by-side war room */
+  @media (min-width: 760px){
+    #tabs { display:none; }
+    body { padding-bottom:20px; max-width:1160px; margin:0 auto;
+      display:grid; grid-template-columns: minmax(360px, 1.1fr) minmax(340px, .9fr);
+      grid-template-areas: "status status" "err err" "block block" "search side1" "search side2";
+      grid-template-rows: auto auto auto auto 1fr;
+      column-gap:14px; align-items:start; }
+    #statusbar { grid-area:status; }
+    #err { grid-area:err; }
+    #block { grid-area:block; margin:12px 0 0; }
+    #view-search { grid-area:search; display:block !important; }
+    #view-plan { grid-area:side1; display:block !important; }
+    #view-board { grid-area:side2; display:block !important; }
+    #view-search .wrap { position:static; background:none; padding-left:0; }
+    #view-plan .wrap, #view-board .wrap { padding:12px 0 6px; }
+    #results { max-height: calc(100vh - 250px); overflow-y:auto; border:1px solid var(--line);
+      border-radius:12px; background:rgba(14,21,18,.5); }
+    #cardbody { max-width:520px; margin:0 auto; border:1px solid var(--line); border-radius:18px; }
+    #card.open { align-items:center; }
+  }
 </style>
 </head>
 <body>
@@ -223,12 +252,15 @@
 
 <div id="view-plan" style="display:none">
   <div class="wrap">
+    <div id="scarcity"></div>
     <div id="targethint"></div>
     <h3>My roster</h3>
     <div id="myroster"></div>
+    <h3>Nomination queue</h3>
+    <div id="queue"></div>
     <h3>Best available for my open slots</h3>
     <div id="targets"></div>
-    <details><summary>All team budgets</summary><div id="teams"></div></details>
+    <details id="teamsdet"><summary>All team budgets</summary><div id="teams"></div></details>
   </div>
 </div>
 
@@ -279,6 +311,7 @@ let lastSig = "";
 let prevMeta = null;         // last seen nomination metadata (for sold synthesis)
 let manual = [];             // manual overrides [{player_id, amount, mine}]
 let manualNom = null;        // manually flagged on-the-block {pid, ts}
+let queue = [];              // starred sleeper_ids (nomination shortlist)
 let lastApiNom = null;       // last nominated_player_id seen from the API
 
 const $ = id => document.getElementById(id);
@@ -308,7 +341,14 @@ function allPicks(){
   return picks.concat(extra.filter(e=>{ const k=String(e.player_id); if(seen.has(k)||have.has(k)) return false; seen.add(k); return true; }));
 }
 function manualKey(){ return "manual_picks_"+(draftId||"x"); }
-function loadManual(){ try { manual = JSON.parse(localStorage.getItem(manualKey())||"[]"); } catch(e){ manual=[]; } }
+function loadManual(){ try { manual = JSON.parse(localStorage.getItem(manualKey())||"[]"); } catch(e){ manual=[]; }
+  try { queue = JSON.parse(localStorage.getItem("queue_"+(draftId||"x"))||"[]"); } catch(e){ queue=[]; } }
+function saveQueue(){ try { localStorage.setItem("queue_"+(draftId||"x"), JSON.stringify(queue)); } catch(e){} }
+function toggleQueue(sid){
+  const i = queue.indexOf(String(sid));
+  if (i>=0) queue.splice(i,1); else queue.push(String(sid));
+  saveQueue(); lastSig=""; renderAll();
+}
 function saveManual(){ try { localStorage.setItem(manualKey(), JSON.stringify(manual)); } catch(e){} }
 function addManual(pid, amount, mine){
   manual = manual.filter(m=>String(m.player_id)!==String(pid));
@@ -466,8 +506,10 @@ function openCard(fpId){
     bidBlock = `<div class="bigbid"><div class="n">${fmtMoney(rec)}</div>
       <div class="l">my max bid · hard cap ${fmtMoney(d.myHardCap)}</div></div>`;
   }
+  const starred = queue.includes(String(p.sleeper_id));
   $("cardbody").innerHTML = `
-    <h2>${p.name} ${p.inj?`<span class="inj">${p.inj}</span>`:""}</h2>
+    <h2>${p.name} ${p.inj?`<span class="inj">${p.inj}</span>`:""}
+      ${p.sleeper_id?`<button class="qstar" data-act="star" data-sid="${p.sleeper_id}">${starred?"★":"☆"}</button>`:""}</h2>
     <div class="sub">${p.team||""} · ${p.pos} · bye ${p.bye||"?"}</div>
     ${bidBlock}
     <div class="stats">
@@ -507,6 +549,18 @@ function manualButtons(p, t, d){
 function renderPlan(){
   const d = derive();
   renderStatus(d);
+  // scarcity strip: startable players left per position + cliff to next tier
+  $("scarcity").innerHTML = ["QB","RB","WR","TE"].map(pos=>{
+    const avail = players.filter(p=>p.sleeper_id && p.pos===pos && p.value>1 && !d.takenById.get(p.sleeper_id));
+    const n = avail.length;
+    const cliff = avail.length>3 ? adjVal(avail[0],d)-adjVal(avail[3],d) : 0;
+    return `<div class="scell"><div class="p ${pos}" style="color:var(--${pos.toLowerCase()})">${pos}</div>
+      <div class="c ${n<=4?'hot':''}">${n}</div><div class="cl">left · cliff $${cliff}</div></div>`;
+  }).join("");
+  // nomination queue
+  $("queue").innerHTML = queue.length
+    ? queue.map(sid=>bySleeper.get(String(sid))).filter(Boolean).map(p=>rowHtml(p,d)).join("")
+    : `<div class="noresult" style="padding:10px">star players from their card (☆) to build a nominate list</div>`;
   // roster
   $("myroster").innerHTML = d.slots.map(s => `<div class="slotrow">
       <div class="sl">${s.slot.replace("SUPER_FLEX","SFLX")}</div>
@@ -548,6 +602,7 @@ function renderPlan(){
 function renderBoard(){
   const d = derive();
   renderStatus(d);
+  if (isDesk() && $("teamsdet")) $("teamsdet").open = true;
   const dn = draft ? ((draft.metadata||{}).name || "draft") : "…";
   const overridden = !!localStorage.getItem("active_draft_v1") || !!DRAFT_OVERRIDE;
   $("leaguesec").innerHTML = `<div class="mrow">
@@ -616,11 +671,14 @@ async function switchDraft(did){
   renderBoard();
 }
 
+const isDesk = () => matchMedia("(min-width: 760px)").matches;
 function renderAll(){
+  if (isDesk()){ renderSearch(); renderPlan(); renderBoard(); return; }
   if ($("view-search").style.display!=="none") renderSearch();
   else if ($("view-plan").style.display!=="none") renderPlan();
   else renderBoard();
 }
+matchMedia("(min-width: 760px)").addEventListener("change", ()=>{ lastSig=""; renderAll(); });
 
 // ---------- data loading / polling ----------
 async function j(url){
@@ -784,12 +842,17 @@ $("results").addEventListener("click", e=>{
 $("targets").addEventListener("click", e=>{
   const r = e.target.closest(".row"); if (r) openCard(r.dataset.fp);
 });
+$("queue").addEventListener("click", e=>{
+  const r = e.target.closest(".row"); if (r) openCard(r.dataset.fp);
+});
 $("card").addEventListener("click", e=>{ if (e.target.id==="card") $("card").classList.remove("open"); });
 $("cardbody").addEventListener("click", e=>{
   const b = e.target.closest("[data-act]"); if (!b) return;
   const sid = b.dataset.sid;
+  if (b.dataset.act==="star"){ toggleQueue(sid); const pl = players.find(x=>String(x.sleeper_id)===String(sid)); if (pl) openCard(pl.fp_id); return; }
   if (b.dataset.act==="undo"){ removeManual(sid); }
   else if (b.dataset.act==="nom"){ manualNom = {pid:sid, ts:Date.now()}; lastSig=""; renderBlock(); }
+  else if (b.dataset.act==="star"){ toggleQueue(sid); openCard(b.closest("#cardbody") ? (players.find(x=>String(x.sleeper_id)===String(sid))||{}).fp_id : null); return; }
   else {
     const amt = parseInt(($("mprice")||{}).value, 10) || 1;
     addManual(sid, amt, b.dataset.act==="mine");
