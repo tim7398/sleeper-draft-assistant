@@ -219,9 +219,16 @@
     <div id="myroster"></div>
     <h3>Best available for my open slots</h3>
     <div id="targets"></div>
-    <div id="manualsec"></div>
     <details><summary>All team budgets</summary><div id="teams"></div></details>
-    <button class="syncbtn" id="syncbtn">Sync with league</button>
+  </div>
+</div>
+
+<div id="view-board" style="display:none">
+  <div class="wrap">
+    <button class="syncbtn" id="syncbtn" style="margin-top:2px">⟳ Sync with league</button>
+    <div id="manualsec"></div>
+    <h3>Draft log — newest first</h3>
+    <div id="dlog"></div>
   </div>
 </div>
 
@@ -230,6 +237,7 @@
 <div id="tabs">
   <button id="tab-search" class="active">The Block</button>
   <button id="tab-plan">My Plan</button>
+  <button id="tab-board">Sync·Log</button>
 </div>
 
 <script>
@@ -512,18 +520,6 @@ function renderPlan(){
   $("targethint").innerHTML = bestCliff && draft && draft.status==="drafting"
     ? `<div class="hint">Biggest cliff: <b>${bestCliff.slot.replace("SUPER_FLEX","SUPERFLEX")}</b> — after ${bestCliff.top.name} (${fmtMoney(adjVal(bestCliff.top,d))}) value drops ${fmtMoney(bestCliff.cliff)}. Budget ${fmtMoney(d.myBudget)} across ${d.myOpen} slots.</div>`
     : "";
-  // manual entries
-  $("manualsec").innerHTML = (!manual.length
-    ? `<h3>Manual entries</h3><div class="noresult" style="padding:14px">none yet — open a player card and tap <b>＋ Mine</b> or <b>Sold other</b></div>`
-    : `<h3>Manual entries (${manual.length})</h3>`) + manual.map(m=>{
-      const pl = bySleeper.get(String(m.player_id));
-      return `<div class="mrow">
-        <span class="tag ${m.mine?'mine':'other'}">${m.mine?'MINE':'OTHER'}</span>
-        <div class="mn">${pl?pl.name:m.player_id}</div>
-        <div class="ma">${fmtMoney(m.amount)}</div>
-        <button class="mx" data-msid="${m.player_id}">✕</button>
-      </div>`;
-    }).join("");
   // team budgets
   const owners = [...new Set([MY_USER, ...allPicks().map(pickOwner)])];
   $("teams").innerHTML = owners.map(o=>{
@@ -535,8 +531,40 @@ function renderPlan(){
   }).join("");
 }
 
+function renderBoard(){
+  const d = derive();
+  renderStatus(d);
+  $("manualsec").innerHTML = (!manual.length
+    ? `<h3>Manual entries</h3><div class="noresult" style="padding:14px">none yet — open a player card and tap <b>＋ Mine</b> or <b>Sold other</b></div>`
+    : `<h3>Manual entries (${manual.length})</h3>`) + manual.map(m=>{
+      const pl = bySleeper.get(String(m.player_id));
+      return `<div class="mrow">
+        <span class="tag ${m.mine?'mine':'other'}">${m.mine?'MINE':'OTHER'}</span>
+        <div class="mn">${pl?pl.name:m.player_id}</div>
+        <div class="ma">${fmtMoney(m.amount)}</div>
+        <button class="mx" data-msid="${m.player_id}">✕</button>
+      </div>`;
+    }).join("");
+  const log = allPicks().slice().sort((a,b)=>(b.pick_no||9999)-(a.pick_no||9999));
+  $("dlog").innerHTML = log.length ? log.map(pk=>{
+    const pl = bySleeper.get(String(pk.player_id));
+    const nm = pl ? pl.name : ((pk.metadata||{}).first_name+" "+(pk.metadata||{}).last_name);
+    const pos = pl ? pl.pos : ((pk.metadata||{}).position||"?");
+    const own = pickOwner(pk);
+    const man = (pk.metadata||{}).manual ? " ·manual" : ((pk.metadata||{}).synthetic ? " ·pending" : "");
+    return `<div class="mrow" ${pl?`data-fp="${pl.fp_id}"`:""}>
+      <span class="tag ${own===MY_USER?'mine':'other'}" style="min-width:34px;text-align:center">${pk.pick_no||"—"}</span>
+      <div class="mn">${nm} <span class="muted" style="font:500 10px var(--mono)">${pos}${man}</span></div>
+      <div class="ma">${fmtMoney(pickAmount(pk))}</div>
+      <div class="muted" style="font:500 10px var(--mono)">${teamName(own)}</div>
+    </div>`;
+  }).join("") : `<div class="noresult">no picks yet</div>`;
+}
+
 function renderAll(){
-  if ($("view-search").style.display!=="none") renderSearch(); else renderPlan();
+  if ($("view-search").style.display!=="none") renderSearch();
+  else if ($("view-plan").style.display!=="none") renderPlan();
+  else renderBoard();
 }
 
 // ---------- data loading / polling ----------
@@ -705,16 +733,13 @@ $("cardbody").addEventListener("click", e=>{
   }
   $("card").classList.remove("open");
 });
-$("tab-search").addEventListener("click", ()=>{
-  $("view-search").style.display=""; $("view-plan").style.display="none";
-  $("tab-search").classList.add("active"); $("tab-plan").classList.remove("active");
-  renderSearch();
-});
-$("tab-plan").addEventListener("click", ()=>{
-  $("view-search").style.display="none"; $("view-plan").style.display="";
-  $("tab-plan").classList.add("active"); $("tab-search").classList.remove("active");
-  renderPlan();
-});
+const TABS = [["tab-search","view-search",renderSearch],["tab-plan","view-plan",renderPlan],["tab-board","view-board",renderBoard]];
+for (const [tid, vid, fn] of TABS){
+  $(tid).addEventListener("click", ()=>{
+    for (const [t2, v2] of TABS){ $(v2).style.display = v2===vid ? "" : "none"; $(t2).classList.toggle("active", t2===tid); }
+    fn();
+  });
+}
 $("block").addEventListener("click", e=>{
   const r = e.target.closest(".toprow"); if (r && r.dataset.fp) openCard(r.dataset.fp);
 });
