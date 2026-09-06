@@ -312,6 +312,9 @@ let prevMeta = null;         // last seen nomination metadata (for sold synthesi
 let manual = [];             // manual overrides [{player_id, amount, mine}]
 let manualNom = null;        // manually flagged on-the-block {pid, ts}
 let queue = [];              // starred sleeper_ids (nomination shortlist)
+let activeView = "view-search";
+let lastBlockSig = "";
+let picksSeq = 0;
 let lastApiNom = null;       // last nominated_player_id seen from the API
 
 const $ = id => document.getElementById(id);
@@ -375,11 +378,14 @@ function derive(){
   const totalSlots = TEAMS * (STARTERS.length + BENCH);
   const leagueOpen = Math.max(0, totalSlots - apicks.length);
   const remainingPool = TEAMS*BUDGET - [...spentBy.values()].reduce((a,b)=>a+b,0);
-  // inflation: remaining $ vs baseline value of the players that will fill remaining slots
-  const availVals = players.filter(p => p.sleeper_id && !takenById.has(p.sleeper_id)).map(p=>p.value)
-                           .sort((a,b)=>b-a).slice(0, leagueOpen);
-  const remainingValue = availVals.reduce((a,b)=>a+Math.max(b,1),0);
-  const inflation = remainingValue > 0 ? remainingPool / remainingValue : 1;
+  // inflation on the BIDDABLE pool: reserve $1 per dart slot, compare the rest
+  // to the value of remaining >$1 players (bench darts muted the signal before)
+  const availMoney = players.filter(p => p.sleeper_id && p.value>1 && !takenById.has(p.sleeper_id))
+                            .map(p=>p.value).sort((a,b)=>b-a);
+  const M = Math.min(availMoney.length, leagueOpen);
+  const moneyPool = remainingPool - Math.max(0, leagueOpen - M);
+  const remainingValue = availMoney.slice(0, M).reduce((a,b)=>a+b, 0);
+  const inflation = remainingValue > 0 ? Math.max(0, moneyPool) / remainingValue : 1;
 
   // my roster slot assignment (greedy: dedicated slot first, then FLEX/SF, then BN)
   const myPicks = apicks.filter(p => pickOwner(p) === MY_USER)
@@ -483,9 +489,11 @@ function renderSearch(){
   $("results").innerHTML = list.length ? list.map(p=>rowHtml(p,d)).join("") : `<div class="noresult">no match — check spelling</div>`;
 }
 
+function esc(x){ return String(x).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
 function teamName(owner){
   if (owner==="manual_other") return "other (manual)";
-  return users.get(owner) || (owner===MY_USER?"me":String(owner).slice(0,8));
+  const n = users.get(owner);
+  return n ? esc(n) : (owner===MY_USER?"me":String(owner).slice(0,8));
 }
 
 function openCard(fpId){
@@ -602,7 +610,6 @@ function renderPlan(){
 function renderBoard(){
   const d = derive();
   renderStatus(d);
-  if (isDesk() && $("teamsdet")) $("teamsdet").open = true;
   const dn = draft ? ((draft.metadata||{}).name || "draft") : "…";
   const overridden = !!localStorage.getItem("active_draft_v1") || !!DRAFT_OVERRIDE;
   $("leaguesec").innerHTML = `<div class="mrow">
@@ -674,8 +681,8 @@ async function switchDraft(did){
 const isDesk = () => matchMedia("(min-width: 760px)").matches;
 function renderAll(){
   if (isDesk()){ renderSearch(); renderPlan(); renderBoard(); return; }
-  if ($("view-search").style.display!=="none") renderSearch();
-  else if ($("view-plan").style.display!=="none") renderPlan();
+  if (activeView==="view-search") renderSearch();
+  else if (activeView==="view-plan") renderPlan();
   else renderBoard();
 }
 matchMedia("(min-width: 760px)").addEventListener("change", ()=>{ lastSig=""; renderAll(); });
@@ -733,15 +740,24 @@ async function fastLoop(){
         refreshPicks(4);
       }
     }
-    if (m.nominated_player_id) prevMeta = m;
+    if (m.nominated_player_id) prevMeta = {...m, _ts: Date.now()};
     if (m.nominated_player_id && m.nominated_player_id !== lastApiNom){
       // API reported a (new) nomination — it supersedes any manual flag
       lastApiNom = m.nominated_player_id;
       manualNom = null;
     }
-    const sig = [draft.status, m.nominated_player_id, m.highest_offer, m.offering_slot,
-                 allPicks().length, manualNom && manualNom.pid, $("search").value].join("|");
-    if (sig !== lastSig){ lastSig = sig; renderBlock(); renderAll(); }
+    // split sigs: bid churn re-renders only the banner (keeps list scroll stable)
+    const blockSig = [draft.status, m.nominated_player_id, m.highest_offer, m.offering_slot,
+                      manualNom && manualNom.pid, allPicks().length].join("|");
+    const listSig = [draft.status, allPicks().length, $("search").value].join("|");
+    if (blockSig !== lastBlockSig){
+      try { renderBlock(); lastBlockSig = blockSig; }
+      catch(re){ showErr("render error (banner): "+re.message); }
+    }
+    if (listSig !== lastSig){
+      try { renderAll(); lastSig = listSig; }
+      catch(re){ showErr("render error: "+re.message); }
+    }
   } catch(e){
     $("polldot").classList.remove("ok");
     showErr("draft fetch failed: "+e.message);
@@ -749,8 +765,10 @@ async function fastLoop(){
 }
 
 function synthesizeSold(){
-  // last_picked changed: prevMeta holds the nomination that just resolved
+  // last_picked changed: prevMeta holds the nomination that just resolved.
+  // Refuse if stale (backgrounded tab / flap) — /picks reconcile covers it.
   if (!prevMeta || !prevMeta.nominated_player_id) return;
+  if (!prevMeta._ts || Date.now() - prevMeta._ts > 15000) return;
   const pid = String(prevMeta.nominated_player_id);
   if (picks.some(p=>String(p.player_id)===pid)) return;
   synth.push({
@@ -763,16 +781,20 @@ function synthesizeSold(){
 }
 
 async function refreshPicks(retries){
+  const seq = ++picksSeq;
   const before = picks.length;
   try {
-    picks = MOCK ? mockPicks() : await j(`${API}/draft/${draftId}/picks?_=${Date.now()}`);
-    const have = new Set(picks.map(p=>String(p.player_id)));
-    synth = synth.filter(s=>!have.has(String(s.player_id)));
+    const fresh = MOCK ? mockPicks() : await j(`${API}/draft/${draftId}/picks?_=${Date.now()}`);
+    if (seq === picksSeq){   // drop out-of-order responses
+      picks = fresh;
+      const have = new Set(picks.map(p=>String(p.player_id)));
+      synth = synth.filter(s=>!have.has(String(s.player_id)));
+    }
   } catch(e){ /* keep last good */ }
   if (picks.length <= before && retries > 0){
     setTimeout(()=>refreshPicks(retries-1), 4000);
   }
-  renderBlock(); renderAll();
+  try { renderBlock(); renderAll(); } catch(re){ showErr("render error: "+re.message); }
 }
 
 function renderBlock(){
@@ -788,14 +810,25 @@ function renderBlock(){
   const bid = useManual ? 0 : (parseInt(m.highest_offer || "0", 10) || 0);
   const bidder = useManual ? "manual flag" : slotTeamName(m.offering_slot);
   const sold = d.takenById.has(pid);
-  let verdict, vclass;
+  let verdict, vclass, pressure = "";
   if (sold){ verdict = "SOLD"; vclass = "SOLD"; }
   else if (!p){ verdict = ""; vclass = ""; }
   else {
     const rec = recBid(p, d);
     if (bid < rec){ verdict = "BID ≤ $" + rec; vclass = "BID"; }
-    else if (bid === rec){ verdict = "AT MAX"; vclass = "MAX"; }
-    else { verdict = "PASS"; vclass = "PASS"; }
+    else if (bid === rec){ verdict = "AT MAX $" + rec; vclass = "MAX"; }
+    else { verdict = "PASS (me ≤ $" + rec + ")"; vclass = "PASS"; }
+    // pressure: how many other teams can still top the current bid
+    let canBeat = 0;
+    const owners = new Set([...rosterOwner.values()].filter(Boolean));
+    if (!owners.size) for (const o of d.spentBy.keys()) owners.add(o);
+    for (const o of owners){
+      if (o === MY_USER) continue;
+      const cnt = d.countBy.get(o)||0;
+      const cap = BUDGET - (d.spentBy.get(o)||0) - Math.max(0, (STARTERS.length+BENCH-cnt) - 1);
+      if (cap > bid) canBeat++;
+    }
+    pressure = `${canBeat} can top $${bid}`;
   }
   const name = p ? p.name : "player " + pid;
   const sub = p ? `${p.team||""} ${p.pos} · adj ${fmtMoney(adjVal(p,d))} · ${p.pos_rank} T${p.tier}${ppg(p)?` · ${ppg(p)} ppg`:""}${p.up!=null?` · up ${p.up}`:""}${p.bust!=null?` · bust ${p.bust}`:""}` : "not in rankings — likely $1 dart";
@@ -808,7 +841,7 @@ function renderBlock(){
       <div class="bid">${useManual?"":"$"+bid}</div>
       ${verdict?`<div class="verdict ${vclass}">${verdict}</div>`:""}
     </div>
-    <div class="sub2">high: ${bidder} · ${sub}${hover}</div>`;
+    <div class="sub2">${pressure?`<b style="color:var(--fg)">${pressure}</b> · `:""}high: ${bidder} · ${sub}${hover}</div>`;
   el.className = "show";
 }
 
@@ -852,7 +885,6 @@ $("cardbody").addEventListener("click", e=>{
   if (b.dataset.act==="star"){ toggleQueue(sid); const pl = players.find(x=>String(x.sleeper_id)===String(sid)); if (pl) openCard(pl.fp_id); return; }
   if (b.dataset.act==="undo"){ removeManual(sid); }
   else if (b.dataset.act==="nom"){ manualNom = {pid:sid, ts:Date.now()}; lastSig=""; renderBlock(); }
-  else if (b.dataset.act==="star"){ toggleQueue(sid); openCard(b.closest("#cardbody") ? (players.find(x=>String(x.sleeper_id)===String(sid))||{}).fp_id : null); return; }
   else {
     const amt = parseInt(($("mprice")||{}).value, 10) || 1;
     addManual(sid, amt, b.dataset.act==="mine");
@@ -862,6 +894,7 @@ $("cardbody").addEventListener("click", e=>{
 const TABS = [["tab-search","view-search",renderSearch],["tab-plan","view-plan",renderPlan],["tab-board","view-board",renderBoard]];
 for (const [tid, vid, fn] of TABS){
   $(tid).addEventListener("click", ()=>{
+    activeView = vid;
     for (const [t2, v2] of TABS){ $(v2).style.display = v2===vid ? "" : "none"; $(t2).classList.toggle("active", t2===tid); }
     fn();
   });
@@ -898,16 +931,24 @@ $("syncbtn").addEventListener("click", async ()=>{
 });
 document.addEventListener("visibilitychange", ()=>{ if (!document.hidden){ fastLoop(); refreshPicks(0); } });
 
+$("err").addEventListener("click", ()=>location.reload());
 (async function init(){
-  try {
-    await loadStatic();
-    await loadLeague();
-    loadManual();
-    await refreshPicks(0);
-    await fastLoop();
-    setInterval(fastLoop, 900);         // nomination + high bid + sold detector
-    setInterval(()=>refreshPicks(0), 20000);  // slow reconcile of the pick list
-  } catch(e){ showErr("init failed: "+e.message); }
+  for (let attempt=1; attempt<=3; attempt++){
+    try {
+      await loadStatic();
+      await loadLeague();
+      loadManual();
+      await refreshPicks(0);
+      await fastLoop();
+      if ($("teamsdet")) $("teamsdet").open = true;   // budgets visible by default everywhere
+      setInterval(fastLoop, 900);         // nomination + high bid + sold detector
+      setInterval(()=>refreshPicks(0), 20000);  // slow reconcile of the pick list
+      return;
+    } catch(e){
+      showErr(`init failed (try ${attempt}/3): ${e.message} — tap here to reload`);
+      await new Promise(r=>setTimeout(r, 3000));
+    }
+  }
 })();
 </script>
 </body>
